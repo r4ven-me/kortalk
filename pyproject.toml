@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kortalk"
+version = "0.4.0"
+description = "Korvus AI popup: выделенный текст → Claude, OpenAI, локальные модели. Трей, стриминг, два языка."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "kortalk contributors" }]
+keywords = ["korvus", "claude", "openai", "ollama", "clipboard", "popup", "qt", "tray"]
+classifiers = [
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Desktop Environment",
+]
+dependencies = [
+    "PySide6>=6.5",
+    "anthropic>=0.40",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "pytest-qt>=4"]
+
+[project.urls]
+Homepage = "https://github.com/r4ven-me/kortalk"
+
+[project.scripts]
+kortalk = "kortalk.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

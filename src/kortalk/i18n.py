@@ -1,0 +1,136 @@
+"""Локализация интерфейса: английский (по умолчанию) и русский.
+
+Строки в коде пишутся по-английски; tr() возвращает русский перевод,
+когда в настройках выбран язык "ru". CLI-справка и логи — всегда
+по-английски.
+"""
+
+from __future__ import annotations
+
+_LANGUAGES = ("en", "ru")
+_current = "en"
+
+
+def set_language(language: str) -> None:
+    global _current
+    _current = language if language in _LANGUAGES else "en"
+
+
+def current_language() -> str:
+    return _current
+
+
+def tr(text: str) -> str:
+    if _current == "ru":
+        return RU.get(text, text)
+    return text
+
+
+RU: dict[str, str] = {
+    # -- трей / app -----------------------------------------------------------
+    "Popup with selection": "Popup с выделением",
+    "Popup with prompt": "Popup с промптом",
+    "Open window": "Открыть окно",
+    "Settings": "Настройки",
+    "Quit": "Выход",
+    "Hotkeys unavailable: {error}": "Хоткеи недоступны: {error}",
+    # -- окна -----------------------------------------------------------------
+    "*Thinking…*": "*Думаю…*",
+    "*(empty response)*": "*(пустой ответ)*",
+    "Error": "Ошибка",
+    "Copy": "Копировать",
+    "Open in window": "В окно",
+    "Provider:": "Провайдер:",
+    "Prompt + text:": "Промпт + текст:",
+    "Send (Ctrl+Enter)": "Отправить (Ctrl+Enter)",
+    "Response:": "Ответ:",
+    "Ready": "Готов",
+    "Done": "Готово",
+    "Requesting {name}…": "Запрос к {name}…",
+    "Provider not found — check settings": "Провайдер не найден — проверьте настройки",
+    # -- настройки: общие -----------------------------------------------------
+    "Settings — kortalk": "Настройки — kortalk",
+    "General": "Общие",
+    "Prompts": "Промпты",
+    "Hotkeys": "Клавиши",
+    "Providers": "Провайдеры",
+    "Language:": "Язык:",
+    "(applies fully after restart)": "(полностью применяется после перезапуска)",
+    "Theme:": "Тема:",
+    "System": "Как в системе",
+    "system default": "системный",
+    "size:": "размер:",
+    "Font:": "Шрифт:",
+    "Popup width, px:": "Ширина popup, px:",
+    "Popup max height, px:": "Макс. высота popup, px:",
+    "Request timeout, s:": "Таймаут запроса, сек:",
+    "Max response tokens:": "Макс. токенов ответа:",
+    "Start at login": "Запускать при входе в систему",
+    "Settings file: {path}": "Файл настроек: {path}",
+    # -- настройки: промпты ---------------------------------------------------
+    "Name:": "Название:",
+    "Prompt text (the selection is appended after it):":
+        "Текст промпта (выделение добавляется после него):",
+    "Default prompt (for tray/hotkey popup)":
+        "Промпт по умолчанию (для popup из трея/хоткея)",
+    "New prompt {n}": "Новый промпт {n}",
+    "Cannot delete the last prompt.": "Нельзя удалить последний промпт.",
+    # -- настройки: клавиши ---------------------------------------------------
+    "Popup with selection:": "Popup с выделением:",
+    "Open window:": "Открыть окно:",
+    "Clear popup": "Очистить popup",
+    "Clear window": "Очистить окно",
+    "X11: keys are grabbed by the application directly.<br>"
+    "Wayland: the system GlobalShortcuts portal is used —<br>"
+    "the compositor may show a confirmation dialog.":
+        "X11: клавиши перехватываются приложением напрямую.<br>"
+        "Wayland: используется системный портал GlobalShortcuts —<br>"
+        "компоситор может показать диалог подтверждения.",
+    # -- настройки: провайдеры ------------------------------------------------
+    "OpenAI-compatible API": "OpenAI-совместимый API",
+    "Type:": "Тип:",
+    "Model:": "Модель:",
+    "API key:": "API-ключ:",
+    "CLI arguments:": "Аргументы CLI:",
+    "e.g. claude-opus-4-8 / gpt-4o / llama3": "напр. claude-opus-4-8 / gpt-4o / llama3",
+    "e.g. http://localhost:11434/v1": "напр. http://localhost:11434/v1",
+    "extra claude arguments": "доп. аргументы claude",
+    "Active provider (default)": "Активный провайдер (по умолчанию)",
+    "New provider {n}": "Новый провайдер {n}",
+    "Cannot delete the last provider.": "Нельзя удалить последний провайдер.",
+    "Failed to configure autostart: {error}": "Не удалось настроить автозапуск: {error}",
+    # -- ошибки провайдеров ---------------------------------------------------
+    "Unknown provider type: {type}": "Неизвестный тип провайдера: {type}",
+    "Unexpected error: {error}": "Непредвиденная ошибка: {error}",
+    "Claude Code CLI (`claude`) not found in PATH.\nInstall: https://docs.claude.com":
+        "Claude Code CLI (`claude`) не найден в PATH.\nУстановка: https://docs.claude.com",
+    "claude did not respond within {timeout} s.": "claude не ответил за {timeout} сек.",
+    "claude exited with an error:\n{error}": "claude завершился с ошибкой:\n{error}",
+    "The `anthropic` package is not installed (pip install anthropic).":
+        "Пакет `anthropic` не установлен (pip install anthropic).",
+    "Anthropic API key is not set — open Settings → Providers.":
+        "Не задан API-ключ Anthropic — откройте Настройки → Провайдеры.",
+    "The model declined the request (safety refusal).":
+        "Модель отклонила запрос (safety refusal).",
+    "Invalid Anthropic API key.": "Неверный API-ключ Anthropic.",
+    "Model “{model}” not found — check the name in settings.":
+        "Модель «{model}» не найдена — проверьте имя в настройках.",
+    "Anthropic rate limit exceeded — wait and retry.":
+        "Превышен лимит запросов Anthropic — подождите и повторите.",
+    "Anthropic API error ({code}): {message}": "Ошибка Anthropic API ({code}): {message}",
+    "Cannot connect to api.anthropic.com — check your network.":
+        "Нет соединения с api.anthropic.com — проверьте сеть.",
+    "Provider base URL is not set — open Settings → Providers.":
+        "Не задан base URL провайдера — откройте Настройки → Провайдеры.",
+    "Model is not set — open Settings → Providers.\n"
+    "For Ollama: the name of an installed model (see `ollama list`).":
+        "Не задана модель — откройте Настройки → Провайдеры.\n"
+        "Для Ollama: имя установленной модели (см. `ollama list`).",
+    "API key is not set — open Settings → Providers.":
+        "Не задан API-ключ — откройте Настройки → Провайдеры.",
+    "API error ({code}): {message}": "Ошибка API ({code}): {message}",
+    "Cannot connect to {url}: {reason}": "Нет соединения с {url}: {reason}",
+    "Is Ollama running? (`ollama serve`)": "Ollama запущен? (`ollama serve`)",
+    "The provider did not respond within {timeout} s.":
+        "Провайдер не ответил за {timeout} сек.",
+}

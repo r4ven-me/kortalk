@@ -1,0 +1,36 @@
+# Публикация на PyPI по тегу vX.Y.Z через trusted publishing.
+# Перед первым запуском: PyPI → project kortalk → Publishing →
+# добавить GitHub-репозиторий r4ven-me/kortalk, workflow publish.yml,
+# environment pypi. Токены не нужны.
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build && python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
