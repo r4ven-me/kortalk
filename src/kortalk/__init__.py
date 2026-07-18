@@ -1,7 +1,7 @@
-"""kortalk — отправка выделенного текста в ИИ (Claude, OpenAI, локальные модели).
+"""kortalk — send selected text to an AI (Claude, OpenAI, local models).
 
-GUI на PySide6: popup у курсора, окно в два столбца, иконка в трее,
-графические настройки. Вдохновлено Crow Translate.
+PySide6 GUI: popup near the cursor, two-column window, tray icon,
+graphical settings. Inspired by Crow Translate.
 """
 
 __version__ = "0.4.0"

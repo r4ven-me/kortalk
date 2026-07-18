@@ -1,4 +1,4 @@
-"""Окна kortalk: PopupWindow (у курсора) и MainWindow (два столбца)."""
+"""kortalk windows: PopupWindow (near the cursor) and MainWindow (two columns)."""
 
 from __future__ import annotations
 
@@ -26,18 +26,18 @@ from .config import Config
 from .i18n import tr
 from .providers import AIWorker
 
-_RENDER_INTERVAL_MS = 80  # частота перерисовки Markdown при стриминге
+_RENDER_INTERVAL_MS = 80  # Markdown re-render rate while streaming
 
 
 def _stop_worker(worker: AIWorker | None) -> None:
-    """Останавливает воркер, если он ещё жив: завершившийся воркер удаляет
-    себя сам через deleteLater, и обращение к нему даёт RuntimeError."""
+    """Stops the worker if it is still alive: a finished worker deletes
+    itself via deleteLater, and touching it raises RuntimeError."""
     if worker is not None and shiboken6.isValid(worker) and worker.isRunning():
         worker.stop()
 
 
 class _StreamingBrowser(QTextBrowser):
-    """QTextBrowser с накоплением стримящегося текста и Markdown-рендером."""
+    """QTextBrowser that accumulates streamed text and renders Markdown."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -81,16 +81,16 @@ class _StreamingBrowser(QTextBrowser):
 
 
 class PopupWindow(QWidget):
-    """Всплывающее окно у курсора: скруглённые углы, автозакрытие по клику
-    за пределами окна (Qt.Popup) и Escape, выделяемый Markdown-ответ."""
+    """Popup near the cursor: rounded corners, auto-close on an outside
+    click (Qt.Popup) and Escape, selectable Markdown response."""
 
-    open_in_window = Signal(str)  # текст ответа -> открыть в главном окне
+    open_in_window = Signal(str)  # response text -> open in the main window
 
     RADIUS = 12
 
     def __init__(self, config: Config, provider_name: str):
-        # Qt.Popup даёт нативное поведение "клик снаружи закрывает",
-        # при этом клики ВНУТРИ (выделение текста, кнопки) работают.
+        # Qt.Popup gives the native "click outside closes" behaviour while
+        # clicks INSIDE (text selection, buttons) keep working.
         super().__init__(None, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -103,8 +103,8 @@ class PopupWindow(QWidget):
 
         app = QGuiApplication.instance()
         dark = theme.is_dark(app)
-        bg = theme.NORD["n0"] if dark else theme.NORD["n6"]
-        fg = theme.NORD["n6"] if dark else theme.NORD["n0"]
+        bg = theme.NORD["n00"] if dark else theme.NORD["n6"]
+        fg = theme.NORD["n5"] if dark else theme.NORD["n0"]
         border = theme.NORD["n3"] if dark else theme.NORD["n4"]
         muted = theme.NORD["n4"] if dark else theme.NORD["n3"]
         code_bg = theme.NORD["n1"] if dark else theme.NORD["n5"]
@@ -154,7 +154,7 @@ class PopupWindow(QWidget):
 
         self.browser = _StreamingBrowser(self.card)
         self.browser.document().setDocumentMargin(0)
-        # фон для блоков кода в Markdown
+        # background for Markdown code blocks
         self.browser.document().setDefaultStyleSheet(
             f"pre, code {{ background-color: {code_bg}; }}"
         )
@@ -167,7 +167,7 @@ class PopupWindow(QWidget):
             lambda _size: self._adjust_height()
         )
 
-    # -- публичный API --------------------------------------------------------
+    # -- public API -----------------------------------------------------------
 
     def ask(self, provider, prompt: str) -> None:
         self.browser.begin_stream(tr("*Thinking…*"))
@@ -188,7 +188,7 @@ class PopupWindow(QWidget):
         self.move(max(geo.left() + 8, x), max(geo.top() + 8, y))
         self.show()
 
-    # -- внутреннее ------------------------------------------------------------
+    # -- internals ------------------------------------------------------------
 
     def _on_finished(self, text: str) -> None:
         self.browser.finish(text)
@@ -198,7 +198,7 @@ class PopupWindow(QWidget):
 
     def _adjust_height(self) -> None:
         doc_height = self.browser.document().size().height()
-        chrome = 64  # заголовок + отступы
+        chrome = 64  # header + margins
         height = int(min(self.max_height, max(90, doc_height + chrome)))
         self.setFixedHeight(height)
 
@@ -216,7 +216,8 @@ class PopupWindow(QWidget):
 
 
 class MainWindow(QMainWindow):
-    """Окно в два столбца: промпт+текст слева, ответ справа; выбор провайдера."""
+    """Two-column window: prompt+text on the left, response on the right;
+    provider selector in the toolbar."""
 
     settings_requested = Signal()
 
@@ -331,6 +332,6 @@ class MainWindow(QMainWindow):
             self.config.sync()
 
     def closeEvent(self, event) -> None:
-        # Окно закрывается, приложение остаётся жить в трее.
+        # The window closes, the application stays alive in the tray.
         _stop_worker(self.worker)
         super().closeEvent(event)

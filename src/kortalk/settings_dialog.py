@@ -1,4 +1,4 @@
-"""Диалог настроек: общие, промпты, клавиши, провайдеры."""
+"""Settings dialog: general, prompts, hotkeys, providers."""
 
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ from .i18n import tr
 
 AUTOSTART_FILE = Path.home() / ".config" / "autostart" / "kortalk.desktop"
 
-# Exec — абсолютный путь: при установке через pipx ~/.local/bin может
-# отсутствовать в PATH на этапе входа в сессию.
+# Exec must be an absolute path: with a pipx install ~/.local/bin may not be
+# in PATH yet when the session starts.
 AUTOSTART_DESKTOP = """\
 [Desktop Entry]
 Type=Application
@@ -46,12 +46,14 @@ Icon=applications-education-language
 X-GNOME-Autostart-enabled=true
 """
 
-# подписи — ключи tr(): переводятся в момент построения диалога
+# labels are tr() keys: translated when the dialog is built
 PROVIDER_TYPES = [
     ("claude-cli", "Claude Code CLI"),
     ("anthropic", "Anthropic API"),
     ("openai", "OpenAI-compatible API"),
 ]
+
+_KEY_FMT = QKeySequence.SequenceFormat.PortableText
 
 
 class SettingsDialog(QDialog):
@@ -79,7 +81,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(tabs)
         layout.addWidget(buttons)
 
-    # -- вкладка «Общие» -------------------------------------------------------
+    # -- "General" tab --------------------------------------------------------
 
     def _build_general_tab(self) -> QWidget:
         page = QWidget()
@@ -114,7 +116,7 @@ class SettingsDialog(QDialog):
         self.font_default.toggled.connect(lambda on: self.font_combo.setEnabled(not on))
         self.font_size = QSpinBox()
         self.font_size.setRange(0, 32)
-        self.font_size.setSpecialValueText("авто")
+        self.font_size.setSpecialValueText(tr("auto"))
         self.font_size.setValue(int(self.config.get("font_size")))
         font_row.addWidget(self.font_default)
         font_row.addWidget(self.font_combo, 1)
@@ -151,7 +153,7 @@ class SettingsDialog(QDialog):
         form.addRow("", QLabel(f"<i>{settings_path}</i>"))
         return page
 
-    # -- вкладка «Промпты» -------------------------------------------------------
+    # -- "Prompts" tab --------------------------------------------------------
 
     def _build_prompts_tab(self) -> QWidget:
         page = QWidget()
@@ -162,7 +164,7 @@ class SettingsDialog(QDialog):
         active_name = str(self.config.get("active_prompt"))
         for p in self.config.prompts():
             item = QListWidgetItem(p.name)
-            item.setData(Qt.ItemDataRole.UserRole, Prompt(p.name, p.text))
+            item.setData(Qt.ItemDataRole.UserRole, Prompt(p.name, p.text, p.hotkey))
             self.prompt_list.addItem(item)
         self.prompt_list.currentItemChanged.connect(self._prompt_row_changed)
         left.addWidget(self.prompt_list)
@@ -186,6 +188,16 @@ class SettingsDialog(QDialog):
         right.addWidget(QLabel(tr("Prompt text (the selection is appended after it):")))
         self.prompt_text = QPlainTextEdit()
         right.addWidget(self.prompt_text, 1)
+
+        hotkey_row = QHBoxLayout()
+        hotkey_row.addWidget(QLabel(tr("Hotkey (popup with this prompt):")))
+        self.prompt_hotkey = QKeySequenceEdit()
+        hotkey_row.addWidget(self.prompt_hotkey, 1)
+        hotkey_clear = QPushButton(tr("Clear"))
+        hotkey_clear.clicked.connect(self.prompt_hotkey.clear)
+        hotkey_row.addWidget(hotkey_clear)
+        right.addLayout(hotkey_row)
+
         self.prompt_active = QCheckBox(tr("Default prompt (for tray/hotkey popup)"))
         right.addWidget(self.prompt_active)
         layout.addLayout(right, 2)
@@ -204,7 +216,7 @@ class SettingsDialog(QDialog):
 
     def _prompt_row_changed(self, current: QListWidgetItem | None,
                             previous: QListWidgetItem | None) -> None:
-        # Как и у провайдеров: сохранить прежний элемент до показа нового.
+        # Same as providers: store the previous item before showing the new one.
         self._store_prompt(previous)
         self._show_prompt(current)
 
@@ -215,6 +227,7 @@ class SettingsDialog(QDialog):
         p: Prompt = item.data(Qt.ItemDataRole.UserRole)
         self.prompt_name.setText(p.name)
         self.prompt_text.setPlainText(p.text)
+        self.prompt_hotkey.setKeySequence(QKeySequence(p.hotkey))
         self.prompt_active.setChecked(p.name == self._active_prompt_name)
         self._loading_prompt = False
 
@@ -224,6 +237,7 @@ class SettingsDialog(QDialog):
         p: Prompt = item.data(Qt.ItemDataRole.UserRole)
         p.name = self.prompt_name.text().strip() or p.name
         p.text = self.prompt_text.toPlainText().strip()
+        p.hotkey = self.prompt_hotkey.keySequence().toString(_KEY_FMT)
         item.setData(Qt.ItemDataRole.UserRole, p)
         item.setText(p.name)
 
@@ -250,7 +264,7 @@ class SettingsDialog(QDialog):
             return
         self.prompt_list.takeItem(self.prompt_list.currentRow())
 
-    # -- вкладка «Клавиши» --------------------------------------------------------
+    # -- "Hotkeys" tab --------------------------------------------------------
 
     def _build_hotkeys_tab(self) -> QWidget:
         page = QWidget()
@@ -273,13 +287,16 @@ class SettingsDialog(QDialog):
         form.addRow("", clear_row)
 
         form.addRow("", QLabel("<i>" + tr(
+            "Per-prompt hotkeys are set on the Prompts tab."
+        ) + "</i>"))
+        form.addRow("", QLabel("<i>" + tr(
             "X11: keys are grabbed by the application directly.<br>"
             "Wayland: the system GlobalShortcuts portal is used —<br>"
             "the compositor may show a confirmation dialog."
         ) + "</i>"))
         return page
 
-    # -- вкладка «Провайдеры» ---------------------------------------------------
+    # -- "Providers" tab ------------------------------------------------------
 
     def _build_providers_tab(self) -> QWidget:
         page = QWidget()
@@ -359,9 +376,9 @@ class SettingsDialog(QDialog):
 
     def _provider_row_changed(self, current: QListWidgetItem | None,
                               previous: QListWidgetItem | None) -> None:
-        # ВАЖНО: сначала сохранить форму в прежний элемент, потом показать
-        # новый. Обратный порядок записывал данные нового провайдера в
-        # предыдущий и перемешивал конфиг.
+        # IMPORTANT: store the form into the previous item first, then show
+        # the new one. The reverse order wrote the new provider's data into
+        # the previous one and scrambled the config.
         self._store_form(previous)
         self._show_provider(current)
 
@@ -433,7 +450,7 @@ class SettingsDialog(QDialog):
         p: Provider = item.data(Qt.ItemDataRole.UserRole)
         self.config.remove_provider(p.id)
 
-    # -- сохранение ------------------------------------------------------------------
+    # -- saving ---------------------------------------------------------------
 
     def _save(self) -> None:
         self._store_form(self.provider_list.currentItem())
@@ -460,9 +477,8 @@ class SettingsDialog(QDialog):
             self._active_prompt_name = prompts[0].name
         self.config.set("active_prompt", self._active_prompt_name)
 
-        fmt = QKeySequence.SequenceFormat.PortableText
-        self.config.set_hotkey("popup", self.hotkey_popup.keySequence().toString(fmt))
-        self.config.set_hotkey("window", self.hotkey_window.keySequence().toString(fmt))
+        self.config.set_hotkey("popup", self.hotkey_popup.keySequence().toString(_KEY_FMT))
+        self.config.set_hotkey("window", self.hotkey_window.keySequence().toString(_KEY_FMT))
 
         for i in range(self.provider_list.count()):
             self.config.save_provider(

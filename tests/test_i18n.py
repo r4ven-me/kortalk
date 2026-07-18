@@ -1,4 +1,4 @@
-"""Тесты локализации: en по умолчанию, ru-переводы, целостность шаблонов."""
+"""Localization tests: en by default, ru translations, template integrity."""
 
 import re
 
@@ -22,7 +22,7 @@ def test_russian_translation():
     set_language("ru")
     assert tr("Settings") == "Настройки"
     assert tr("Quit") == "Выход"
-    # неизвестный ключ возвращается как есть
+    # an unknown key is returned as is
     assert tr("no such key") == "no such key"
 
 
@@ -32,6 +32,6 @@ def test_unknown_language_falls_back_to_english():
 
 
 def test_ru_templates_keep_placeholders():
-    # {поля} в переводе должны совпадать с английским ключом
+    # {fields} in a translation must match the English key
     for en, ru in RU.items():
         assert set(re.findall(r"{\w+}", en)) == set(re.findall(r"{\w+}", ru)), en

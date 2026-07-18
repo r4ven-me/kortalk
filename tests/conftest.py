@@ -1,4 +1,4 @@
-"""Общие фикстуры: изолированный конфиг и headless-Qt."""
+"""Shared fixtures: isolated config and headless Qt."""
 
 import os
 
@@ -12,7 +12,7 @@ from kortalk.config import Config
 
 @pytest.fixture
 def config_dir(tmp_path, monkeypatch):
-    """Перенаправляет конфиг kortalk во временный каталог."""
+    """Redirects the kortalk config into a temporary directory."""
     monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(config_mod, "CONFIG_FILE", tmp_path / "config.yaml")
     return tmp_path
@@ -25,7 +25,7 @@ def config(config_dir):
 
 @pytest.fixture(autouse=True)
 def _isolate_autostart(tmp_path, monkeypatch):
-    """Диалог настроек не должен трогать реальный ~/.config/autostart."""
+    """The settings dialog must not touch the real ~/.config/autostart."""
     import kortalk.settings_dialog as settings_dialog
 
     monkeypatch.setattr(

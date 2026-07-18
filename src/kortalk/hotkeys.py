@@ -1,11 +1,11 @@
-"""Глобальные хоткеи внутри приложения, без внешних утилит.
+"""Global hotkeys inside the application, no external tools.
 
-X11: XGrabKey через ctypes (libX11) + отдельный поток чтения X-событий.
-Wayland: XDG Desktop Portal (org.freedesktop.portal.GlobalShortcuts) через QtDBus —
-компоситор сам показывает пользователю диалог подтверждения биндингов.
+X11: XGrabKey via ctypes (libX11) + a dedicated X event reading thread.
+Wayland: XDG Desktop Portal (org.freedesktop.portal.GlobalShortcuts) via
+QtDBus — the compositor itself shows the binding confirmation dialog.
 
-Если ни один бэкенд не доступен, приложение продолжает работать —
-popup вызывается из трея или командой `kortalk --popup`.
+If no backend is available the application keeps working — the popup is
+opened from the tray or with `kortalk --popup`.
 """
 
 from __future__ import annotations
@@ -19,13 +19,13 @@ from PySide6.QtGui import QGuiApplication
 
 log = logging.getLogger(__name__)
 
-# -- разбор строк вида "Ctrl+Alt+C" -------------------------------------------
+# -- parsing strings like "Ctrl+Alt+C" ----------------------------------------
 
 X11_MODMASK = {"ctrl": 1 << 2, "shift": 1 << 0, "alt": 1 << 3, "meta": 1 << 6}
 _NUMLOCK, _CAPSLOCK = 1 << 4, 1 << 1  # Mod2Mask, LockMask
 _RELEVANT_MODS = sum(X11_MODMASK.values())
 
-# имена клавиш Qt -> keysym-имена X11 (XStringToKeysym)
+# Qt key names -> X11 keysym names (XStringToKeysym)
 _KEYSYM_NAMES = {
     "space": "space", "return": "Return", "enter": "Return", "tab": "Tab",
     "esc": "Escape", "escape": "Escape", "backspace": "BackSpace",
@@ -37,7 +37,7 @@ _KEYSYM_NAMES = {
 
 
 def parse_sequence(sequence: str) -> tuple[int, str] | None:
-    """'Ctrl+Alt+C' -> (маска модификаторов X11, keysym-имя). None — не разобрали."""
+    """'Ctrl+Alt+C' -> (X11 modifier mask, keysym name). None — unparseable."""
     parts = [p.strip() for p in sequence.split("+") if p.strip()]
     if not parts:
         return None
@@ -53,7 +53,7 @@ def parse_sequence(sequence: str) -> tuple[int, str] | None:
 
 
 def to_portal_trigger(sequence: str) -> str:
-    """'Ctrl+Alt+C' -> 'CTRL+ALT+c' (формат preferred_trigger портала)."""
+    """'Ctrl+Alt+C' -> 'CTRL+ALT+c' (the portal's preferred_trigger format)."""
     parts = [p.strip() for p in sequence.split("+") if p.strip()]
     if not parts:
         return ""
@@ -62,21 +62,21 @@ def to_portal_trigger(sequence: str) -> str:
     return "+".join(mods + [key.lower() if len(key) == 1 else key])
 
 
-# -- X11-бэкенд -----------------------------------------------------------------
+# -- X11 backend --------------------------------------------------------------
 
 class _X11HotkeyThread(QThread):
-    """Отдельное Xlib-соединение: грабим клавиши на root-окне и читаем события.
-    Qt работает через xcb-соединение, поэтому наш Xlib-обработчик ошибок
-    и цикл событий ему не мешают."""
+    """A separate Xlib connection: grab keys on the root window and read
+    events. Qt talks over its own xcb connection, so our Xlib error handler
+    and event loop do not interfere with it."""
 
     activated = Signal(str)
 
     def __init__(self, bindings: list[tuple[int, str, str]]):
-        # bindings: (маска модификаторов, keysym-имя, action)
+        # bindings: (modifier mask, keysym name, action)
         super().__init__()
         self._bindings = bindings
         self._stop = False
-        self.grabbed: list[str] = []   # actions, которые удалось забиндить
+        self.grabbed: list[str] = []   # actions that were bound successfully
         self.failed: list[str] = []
 
     def stop(self) -> None:
@@ -106,9 +106,9 @@ class _X11HotkeyThread(QThread):
         xlib.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
         xlib.XCloseDisplay.argtypes = [ctypes.c_void_p]
 
-        # Занятая другим клиентом комбинация даёт BadAccess; дефолтный
-        # обработчик Xlib убивает процесс — ставим тихий (только для Xlib,
-        # Qt живёт на xcb и не затрагивается).
+        # A combination taken by another client yields BadAccess; the default
+        # Xlib handler kills the process — install a silent one (Xlib only,
+        # Qt lives on xcb and is not affected).
         handler_t = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
         silent = handler_t(lambda *_a: 0)
         xlib.XSetErrorHandler.argtypes = [ctypes.c_void_p]
@@ -146,7 +146,7 @@ class _X11HotkeyThread(QThread):
             if not keycode:
                 self.failed.append(action)
                 continue
-            # грабим все комбинации NumLock/CapsLock
+            # grab all NumLock/CapsLock combinations
             for extra in (0, _NUMLOCK, _CAPSLOCK, _NUMLOCK | _CAPSLOCK):
                 xlib.XGrabKey(display, keycode, mods | extra, root,
                               1, GRAB_MODE_ASYNC, GRAB_MODE_ASYNC)
@@ -174,7 +174,7 @@ class _X11HotkeyThread(QThread):
         xlib.XCloseDisplay(display)
 
 
-# -- Wayland-бэкенд (XDG Desktop Portal) ----------------------------------------
+# -- Wayland backend (XDG Desktop Portal) -------------------------------------
 
 _PORTAL_SERVICE = "org.freedesktop.portal.Desktop"
 _PORTAL_PATH = "/org/freedesktop/portal/desktop"
@@ -193,7 +193,7 @@ class _PortalHotkeys(QObject):
         self._bus = QDBusConnection.sessionBus()
         self._iface = QDBusInterface(_PORTAL_SERVICE, _PORTAL_PATH, _PORTAL_IFACE, self._bus)
         if not self._iface.isValid():
-            raise RuntimeError("портал GlobalShortcuts недоступен")
+            raise RuntimeError("GlobalShortcuts portal is unavailable")
 
         token = f"kortalk{os.getpid()}"
         sender = self._bus.baseService()[1:].replace(".", "_")
@@ -234,12 +234,12 @@ class _PortalHotkeys(QObject):
         self.activated.emit(shortcut_id)
 
 
-# -- фасад -------------------------------------------------------------------------
+# -- facade -------------------------------------------------------------------
 
 class GlobalHotkeys(QObject):
-    """Регистрирует глобальные хоткеи подходящим для сессии способом."""
+    """Registers global hotkeys in whatever way suits the session."""
 
-    activated = Signal(str)  # action: "popup" | "window"
+    activated = Signal(str)  # action: "popup" | "window" | "prompt:<name>"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -249,7 +249,7 @@ class GlobalHotkeys(QObject):
         self.error = ""
 
     def apply(self, bindings: dict[str, str]) -> None:
-        """bindings: action -> 'Ctrl+Alt+C' (пустая строка = не назначено)."""
+        """bindings: action -> 'Ctrl+Alt+C' (empty string = unassigned)."""
         self.stop()
         bindings = {a: s for a, s in bindings.items() if s}
         if not bindings:
@@ -274,7 +274,7 @@ class GlobalHotkeys(QObject):
                 self._portal = _PortalHotkeys(bindings, self)
                 self._portal.activated.connect(self.activated)
                 self.backend = "portal"
-            except Exception as exc:  # noqa: BLE001 — хоткеи не должны валить приложение
+            except Exception as exc:  # noqa: BLE001 — hotkeys must not kill the app
                 self.backend = "none"
                 self.error = str(exc)
                 log.warning("hotkeys unavailable: %s", exc)

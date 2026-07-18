@@ -1,7 +1,7 @@
-"""Провайдеры ИИ: Claude Code CLI, Anthropic API, OpenAI-совместимые API.
+"""AI providers: Claude Code CLI, Anthropic API, OpenAI-compatible APIs.
 
-Каждый запрос выполняется в AIWorker (QThread) и стримит текст сигналами:
-chunk (дельта), finished_ok (полный текст), failed (сообщение об ошибке).
+Every request runs in an AIWorker (QThread) and streams text via signals:
+chunk (delta), finished_ok (full text), failed (error message).
 """
 
 from __future__ import annotations
@@ -21,37 +21,42 @@ from .i18n import tr
 log = logging.getLogger(__name__)
 
 
-# Живые воркеры. QThread нельзя уничтожать, пока поток работает (Qt делает
-# abort → core dump), поэтому воркеры НЕ имеют Qt-родителя: окно может
-# закрыться и удалиться в любой момент, а воркер доживает своё здесь и
-# удаляется сам по завершении потока.
+# Live workers. A QThread must not be destroyed while its thread is running
+# (Qt aborts -> core dump), so workers have NO Qt parent: a window may close
+# and be deleted at any moment while the worker lives out its life here and
+# removes itself once the thread finishes.
 _ACTIVE_WORKERS: set[AIWorker] = set()
 
 
-def shutdown_workers(wait_ms: int = 1500) -> None:
-    """Останавливает все живые воркеры перед выходом из приложения."""
+def shutdown_workers(wait_ms: int = 500) -> None:
+    """Stops all live workers before the application exits.
+
+    stop() closes the worker's network stream/process, so a blocked read is
+    interrupted right away and wait almost never hits the timeout.
+    """
     for worker in list(_ACTIVE_WORKERS):
         worker.stop()
     for worker in list(_ACTIVE_WORKERS):
         if not worker.wait(wait_ms):
-            worker.terminate()  # крайняя мера при выходе: поток завис на I/O
+            worker.terminate()  # last resort on exit: the thread hung on I/O
             worker.wait(500)
 
 
 class AIWorker(QThread):
-    chunk = Signal(str)          # очередная дельта текста (только у стримящих провайдеров)
-    finished_ok = Signal(str)    # полный итоговый текст
-    failed = Signal(str)         # человекочитаемая ошибка
+    chunk = Signal(str)          # next text delta (streaming providers only)
+    finished_ok = Signal(str)    # full final text
+    failed = Signal(str)         # human-readable error
 
     def __init__(self, provider: Provider, prompt: str, timeout: int,
                  max_tokens: int = 64000):
-        super().__init__()  # без Qt-родителя, см. _ACTIVE_WORKERS
+        super().__init__()  # no Qt parent, see _ACTIVE_WORKERS
         self.provider = provider
         self.prompt = prompt
         self.timeout = timeout
         self.max_tokens = max_tokens
         self._cancelled = False
         self._process: subprocess.Popen | None = None
+        self._stream = None  # active network stream (anthropic MessageStream / HTTPResponse)
         _ACTIVE_WORKERS.add(self)
         self.finished.connect(self._on_thread_finished)
         self.finished_ok.connect(
@@ -70,6 +75,12 @@ class AIWorker(QThread):
                 self._process.kill()
             except OSError:
                 pass
+        stream = self._stream
+        if stream is not None:
+            try:
+                stream.close()  # wakes a thread blocked on a network read
+            except Exception:  # noqa: BLE001 — closing from another thread
+                pass
 
     def run(self) -> None:
         log.info("request: provider=%s (%s), model=%s, %d chars of prompt",
@@ -85,7 +96,7 @@ class AIWorker(QThread):
             else:
                 self.failed.emit(tr("Unknown provider type: {type}")
                                  .format(type=self.provider.type))
-        except Exception as exc:  # noqa: BLE001 — поток не должен падать молча
+        except Exception as exc:  # noqa: BLE001 — the thread must not die silently
             if not self._cancelled:
                 log.exception("unexpected worker error")
                 self.failed.emit(tr("Unexpected error: {error}").format(error=exc))
@@ -124,7 +135,7 @@ class AIWorker(QThread):
             return
         self.finished_ok.emit(stdout.strip())
 
-    # -- Anthropic API (официальный SDK, стриминг) ----------------------------
+    # -- Anthropic API (official SDK, streaming) ------------------------------
 
     def _run_anthropic(self) -> None:
         try:
@@ -147,6 +158,7 @@ class AIWorker(QThread):
                 max_tokens=self.max_tokens,
                 messages=[{"role": "user", "content": self.prompt}],
             ) as stream:
+                self._stream = stream
                 for text in stream.text_stream:
                     if self._cancelled:
                         return
@@ -165,12 +177,18 @@ class AIWorker(QThread):
         except anthropic.RateLimitError:
             self.failed.emit(tr("Anthropic rate limit exceeded — wait and retry."))
         except anthropic.APIStatusError as exc:
+            if self._cancelled:
+                return
             self.failed.emit(tr("Anthropic API error ({code}): {message}")
                              .format(code=exc.status_code, message=exc.message))
         except anthropic.APIConnectionError:
+            if self._cancelled:  # we closed the stream ourselves on cancel/quit
+                return
             self.failed.emit(tr("Cannot connect to api.anthropic.com — check your network."))
+        finally:
+            self._stream = None
 
-    # -- OpenAI-совместимые API (OpenAI, Ollama, LM Studio, OpenRouter, ...) --
+    # -- OpenAI-compatible APIs (OpenAI, Ollama, LM Studio, OpenRouter, ...) --
 
     def _run_openai_compatible(self) -> None:
         base_url = self.provider.base_url.rstrip("/")
@@ -205,6 +223,7 @@ class AIWorker(QThread):
         parts: list[str] = []
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                self._stream = response
                 for raw_line in response:
                     if self._cancelled:
                         return
@@ -233,6 +252,8 @@ class AIWorker(QThread):
             self.failed.emit(tr("API error ({code}): {message}")
                              .format(code=exc.code, message=detail or exc.reason))
         except urllib.error.URLError as exc:
+            if self._cancelled:  # we closed the stream ourselves on cancel/quit
+                return
             hint = tr("Is Ollama running? (`ollama serve`)") if "11434" in base_url else ""
             self.failed.emit(
                 tr("Cannot connect to {url}: {reason}").format(url=base_url, reason=exc.reason)
@@ -241,3 +262,5 @@ class AIWorker(QThread):
         except TimeoutError:
             self.failed.emit(tr("The provider did not respond within {timeout} s.")
                              .format(timeout=self.timeout))
+        finally:
+            self._stream = None

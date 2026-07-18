@@ -1,10 +1,10 @@
-"""Точка входа kortalk: CLI, single-instance, трей, глобальные хоткеи.
+"""kortalk entry point: CLI, single instance, tray, global hotkeys.
 
-Архитектура: `kortalk` без аргументов поднимает резидентное приложение
-(трей + QLocalServer + глобальные хоткеи). Все действия — из трея и по
-хоткеям, назначаемым в настройках. CLI-флаги (--popup и т.п.) оставлены
-для скриптов: они доставляются работающему экземпляру через локальный
-сокет и завершаются мгновенно.
+Architecture: `kortalk` with no arguments starts the resident application
+(tray + QLocalServer + global hotkeys). Everything is driven from the tray
+and via hotkeys assigned in Settings. The CLI flags (--popup etc.) are kept
+for scripting: they are delivered to the running instance over a local
+socket and return immediately.
 """
 
 from __future__ import annotations
@@ -16,10 +16,11 @@ import logging
 import logging.handlers
 import os
 import shutil
+import signal
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray
+from PySide6.QtCore import QByteArray, QTimer
 from PySide6.QtGui import QAction, QClipboard, QGuiApplication
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
@@ -36,11 +37,14 @@ SOCKET_NAME = f"kortalk-{getpass.getuser()}"
 LOG_DIR = Path(os.environ.get("XDG_STATE_HOME",
                               str(Path.home() / ".local" / "state"))) / "kortalk"
 
+# hotkey action prefix for "open the popup with a specific prompt"
+_PROMPT_ACTION = "prompt:"
+
 log = logging.getLogger(__name__)
 
 
 def setup_logging(debug: bool) -> None:
-    """Файл ~/.local/state/kortalk/kortalk.log всегда; stderr — при --debug."""
+    """~/.local/state/kortalk/kortalk.log always; stderr with --debug."""
     root = logging.getLogger("kortalk")
     root.setLevel(logging.DEBUG if debug else logging.INFO)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -53,7 +57,7 @@ def setup_logging(debug: bool) -> None:
         file_handler.setFormatter(fmt)
         root.addHandler(file_handler)
     except OSError:
-        pass  # нет прав/места — работаем без файла
+        pass  # no permissions/space — keep running without the file
     if debug:
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(fmt)
@@ -160,7 +164,7 @@ def run_selftest(config: Config) -> int:
 # ---------------------------------------------------------------------------
 
 def try_send_to_running(command: dict) -> bool:
-    """True, если работающий экземпляр найден и команда доставлена."""
+    """True when a running instance was found and the command delivered."""
     socket = QLocalSocket()
     socket.connectToServer(SOCKET_NAME)
     if not socket.waitForConnected(300):
@@ -173,7 +177,7 @@ def try_send_to_running(command: dict) -> bool:
 
 
 class KortalkApp:
-    """Резидентное приложение: трей + сервер команд + хоткеи + окна."""
+    """Resident application: tray + command server + hotkeys + windows."""
 
     def __init__(self, app: QApplication, config: Config):
         self.app = app
@@ -187,12 +191,13 @@ class KortalkApp:
         app.setQuitOnLastWindowClosed(False)
 
         self.server = QLocalServer()
-        QLocalServer.removeServer(SOCKET_NAME)  # подчистить сокет после падения
+        QLocalServer.removeServer(SOCKET_NAME)  # clean up the socket after a crash
         self.server.listen(SOCKET_NAME)
         self.server.newConnection.connect(self._on_connection)
 
-        # ВАЖНО: меню и трей храним в атрибутах — setContextMenu не берёт
-        # владение, и локальный QMenu был бы собран GC (краш по ПКМ).
+        # IMPORTANT: keep the menu and tray in attributes — setContextMenu
+        # does not take ownership, and a local QMenu would be garbage
+        # collected (crash on right click).
         self.tray = QSystemTrayIcon(theme.make_tray_icon())
         self.menu = QMenu()
         self.prompt_menu = QMenu(tr("Popup with prompt"))
@@ -206,7 +211,7 @@ class KortalkApp:
         self.hotkeys.activated.connect(self._hotkey_activated)
         self._apply_hotkeys()
 
-    # -- трей ----------------------------------------------------------------
+    # -- tray -----------------------------------------------------------------
 
     def _rebuild_menu(self) -> None:
         self.menu.clear()
@@ -216,6 +221,8 @@ class KortalkApp:
         active_name = self.config.active_prompt().name
         for p in self.config.prompts():
             title = f"● {p.name}" if p.name == active_name else p.name
+            if p.hotkey:
+                title += f"\t{p.hotkey}"
             action = QAction(title, self.prompt_menu)
             action.triggered.connect(
                 lambda _checked=False, name=p.name: self.handle(
@@ -247,20 +254,28 @@ class KortalkApp:
         return ""
 
     def _apply_hotkeys(self) -> None:
-        self.hotkeys.apply({
+        bindings = {
             "popup": self.config.hotkey("popup"),
             "window": self.config.hotkey("window"),
-        })
+        }
+        for p in self.config.prompts():
+            if p.hotkey:
+                bindings[_PROMPT_ACTION + p.name] = p.hotkey
+        self.hotkeys.apply(bindings)
         self._update_tooltip()
 
     def _hotkey_activated(self, action: str) -> None:
-        self.handle({"action": action})
+        if action.startswith(_PROMPT_ACTION):
+            self.handle({"action": "popup",
+                         "prompt_name": action[len(_PROMPT_ACTION):]})
+        else:
+            self.handle({"action": action})
 
     def _tray_activated(self, reason) -> None:
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:  # ЛКМ
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:  # left click
             self.handle({"action": "popup"})
 
-    # -- команды -----------------------------------------------------------
+    # -- commands -------------------------------------------------------------
 
     def handle(self, command: dict) -> None:
         action = command.get("action", "daemon")
@@ -273,7 +288,7 @@ class KortalkApp:
             self.open_window(command)
         elif action == "popup":
             self.open_popup(command)
-        # прочее ("daemon", "noop") — просто живём дальше
+        # anything else ("daemon", "noop") — just keep running
 
     def _selection_text(self) -> str:
         clipboard = QGuiApplication.clipboard()
@@ -308,7 +323,7 @@ class KortalkApp:
         label = provider.name + (f" · {provider.model}" if provider.model else "")
         popup = PopupWindow(self.config, label)
         popup.open_in_window.connect(self._popup_to_window)
-        # отложенный destroyed старого popup не должен обнулять ссылку на новый
+        # a deferred destroyed of the old popup must not clear the new one
         popup.destroyed.connect(lambda *_a, p=popup: self._popup_destroyed(p))
         self.popup = popup
         popup.show_near_cursor()
@@ -364,13 +379,14 @@ class KortalkApp:
             self.main_window.reload_providers()
 
     def quit(self) -> None:
-        self.hotkeys.stop()
-        shutdown_workers()
+        self.tray.hide()  # first: the cleanup below may take a moment
         self.server.close()
         QLocalServer.removeServer(SOCKET_NAME)
+        self.hotkeys.stop()
+        shutdown_workers()
         self.app.quit()
 
-    # -- IPC -----------------------------------------------------------------
+    # -- IPC ------------------------------------------------------------------
 
     def _on_connection(self) -> None:
         socket = self.server.nextPendingConnection()
@@ -391,6 +407,27 @@ class KortalkApp:
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
+
+def install_signal_handlers(kortalk: KortalkApp) -> QTimer:
+    """Make Ctrl+C (SIGINT) and SIGTERM quit the application cleanly.
+
+    The `app.exec()` loop runs in C++ and does not execute Python bytecode,
+    so a Python signal handler would never fire on its own. An empty timer
+    wakes the interpreter periodically; the handler runs in the main (GUI)
+    thread, so calling quit() from it is safe.
+    """
+    timer = QTimer()
+    timer.timeout.connect(lambda: None)
+    timer.start(200)
+
+    def handler(signum, _frame) -> None:
+        log.info("received %s, quitting", signal.Signals(signum).name)
+        kortalk.quit()
+
+    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGTERM, handler)
+    return timer
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
@@ -417,6 +454,7 @@ def main(argv: list[str] | None = None) -> int:
             return run_selftest(config)
 
         kortalk = KortalkApp(app, config)
+        _signal_timer = install_signal_handlers(kortalk)  # noqa: F841 — keep a reference
         log.info("kortalk %s started: platform=%s, hotkeys=%s",
                  __version__, QGuiApplication.platformName(), kortalk.hotkeys.backend)
         if command["action"] != "daemon":

@@ -1,8 +1,8 @@
-"""Локализация интерфейса: английский (по умолчанию) и русский.
+"""Interface localization: English (default) and Russian.
 
-Строки в коде пишутся по-английски; tr() возвращает русский перевод,
-когда в настройках выбран язык "ru". CLI-справка и логи — всегда
-по-английски.
+Strings in the code are written in English; tr() returns the Russian
+translation when "ru" is selected in Settings. CLI help and logs are
+always English.
 """
 
 from __future__ import annotations
@@ -27,14 +27,14 @@ def tr(text: str) -> str:
 
 
 RU: dict[str, str] = {
-    # -- трей / app -----------------------------------------------------------
+    # -- tray / app -----------------------------------------------------------
     "Popup with selection": "Popup с выделением",
     "Popup with prompt": "Popup с промптом",
     "Open window": "Открыть окно",
     "Settings": "Настройки",
     "Quit": "Выход",
     "Hotkeys unavailable: {error}": "Хоткеи недоступны: {error}",
-    # -- окна -----------------------------------------------------------------
+    # -- windows --------------------------------------------------------------
     "*Thinking…*": "*Думаю…*",
     "*(empty response)*": "*(пустой ответ)*",
     "Error": "Ошибка",
@@ -48,7 +48,7 @@ RU: dict[str, str] = {
     "Done": "Готово",
     "Requesting {name}…": "Запрос к {name}…",
     "Provider not found — check settings": "Провайдер не найден — проверьте настройки",
-    # -- настройки: общие -----------------------------------------------------
+    # -- settings: general ----------------------------------------------------
     "Settings — kortalk": "Настройки — kortalk",
     "General": "Общие",
     "Prompts": "Промпты",
@@ -59,6 +59,7 @@ RU: dict[str, str] = {
     "Theme:": "Тема:",
     "System": "Как в системе",
     "system default": "системный",
+    "auto": "авто",
     "size:": "размер:",
     "Font:": "Шрифт:",
     "Popup width, px:": "Ширина popup, px:",
@@ -67,26 +68,30 @@ RU: dict[str, str] = {
     "Max response tokens:": "Макс. токенов ответа:",
     "Start at login": "Запускать при входе в систему",
     "Settings file: {path}": "Файл настроек: {path}",
-    # -- настройки: промпты ---------------------------------------------------
+    # -- settings: prompts ----------------------------------------------------
     "Name:": "Название:",
     "Prompt text (the selection is appended after it):":
         "Текст промпта (выделение добавляется после него):",
+    "Hotkey (popup with this prompt):": "Клавиша (popup с этим промптом):",
+    "Clear": "Очистить",
     "Default prompt (for tray/hotkey popup)":
         "Промпт по умолчанию (для popup из трея/хоткея)",
     "New prompt {n}": "Новый промпт {n}",
     "Cannot delete the last prompt.": "Нельзя удалить последний промпт.",
-    # -- настройки: клавиши ---------------------------------------------------
+    # -- settings: hotkeys ----------------------------------------------------
     "Popup with selection:": "Popup с выделением:",
     "Open window:": "Открыть окно:",
     "Clear popup": "Очистить popup",
     "Clear window": "Очистить окно",
+    "Per-prompt hotkeys are set on the Prompts tab.":
+        "Клавиши отдельных промптов назначаются на вкладке «Промпты».",
     "X11: keys are grabbed by the application directly.<br>"
     "Wayland: the system GlobalShortcuts portal is used —<br>"
     "the compositor may show a confirmation dialog.":
         "X11: клавиши перехватываются приложением напрямую.<br>"
         "Wayland: используется системный портал GlobalShortcuts —<br>"
         "компоситор может показать диалог подтверждения.",
-    # -- настройки: провайдеры ------------------------------------------------
+    # -- settings: providers --------------------------------------------------
     "OpenAI-compatible API": "OpenAI-совместимый API",
     "Type:": "Тип:",
     "Model:": "Модель:",
@@ -99,7 +104,7 @@ RU: dict[str, str] = {
     "New provider {n}": "Новый провайдер {n}",
     "Cannot delete the last provider.": "Нельзя удалить последний провайдер.",
     "Failed to configure autostart: {error}": "Не удалось настроить автозапуск: {error}",
-    # -- ошибки провайдеров ---------------------------------------------------
+    # -- provider errors ------------------------------------------------------
     "Unknown provider type: {type}": "Неизвестный тип провайдера: {type}",
     "Unexpected error: {error}": "Непредвиденная ошибка: {error}",
     "Claude Code CLI (`claude`) not found in PATH.\nInstall: https://docs.claude.com":

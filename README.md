@@ -1,133 +1,133 @@
 # kortalk
 
-**Korvus AI popup** — приложение семейства **korvus** (korserver, korctl, kortalk).
-AI-popup для выделенного текста в духе [Crow Translate](https://crow-translate.github.io/):
-выделили текст мышью → нажали хоткей → у курсора всплыло окошко с ответом ИИ.
-Живёт в трее, стримит ответы, поддерживает несколько провайдеров.
+**Korvus AI popup** — part of the **korvus** family (korserver, korctl, kortalk).
+An AI popup for selected text in the spirit of
+[Crow Translate](https://crow-translate.github.io/): select text with the
+mouse → press a hotkey → a window with the AI response pops up near the
+cursor. Lives in the tray, streams responses, supports multiple providers.
 
-## Возможности
+## Features
 
-- **Popup у курсора** — скруглённые углы, Markdown-рендер ответа с подсветкой
-  блоков кода, стриминг токенов в реальном времени, выделение/копирование
-  текста. Закрывается по клику за пределами окна или `Escape`.
-- **Окно в два столбца** — редактируемый промпт+текст слева, ответ справа,
-  выбор провайдера на панели, `Ctrl+Enter` для отправки.
-- **Трей** — приложение резидентно: монохромный ворон (Corvus — символ korvus), ЛКМ = popup
-  с выделением, меню с библиотекой промптов, окном, настройками и выходом.
-- **Глобальные хоткеи внутри приложения** — назначаются в настройках
-  (по умолчанию `Ctrl+Alt+C` popup, `Ctrl+Alt+W` окно). X11 — прямой
-  перехват XGrabKey, Wayland — системный портал GlobalShortcuts.
-  Никаких внешних утилит и настройки DE не требуется.
-- **Библиотека промптов** — несколько именованных промптов в настройках;
-  промпт по умолчанию для хоткея, любой другой — из подменю трея.
-- **Провайдеры ИИ**:
-  - **Claude Code CLI** — через `claude -p`, без API-ключа (по умолчанию);
-  - **Anthropic API** — официальный SDK, стриминг (нужен API-ключ);
-  - **OpenAI-совместимые API** — OpenAI, **Ollama**, LM Studio, OpenRouter,
-    Groq, DeepSeek и любой другой сервис с `/chat/completions` (настраивается
-    `base URL` + модель + ключ, для локальных серверов ключ не нужен).
-- **Графические настройки** — промпты, клавиши, тема, шрифт, размеры popup,
-  таймауты, менеджер провайдеров с ключами, автозапуск при входе.
-  Конфиг — человекочитаемый YAML (`~/.config/kortalk/config.yaml`).
-- **Тема и шрифты** — по умолчанию следует теме окружения (Qt), опционально
-  Nord Dark / Nord Light.
-- **Два языка интерфейса** — английский (по умолчанию) и русский:
-  Настройки → Общие → Language.
-- **PRIMARY-выделение читается нативно** через Qt — xclip/xsel/wl-clipboard
-  больше не нужны. Работает на X11 и Wayland.
+- **Popup near the cursor** — rounded corners, Markdown rendering with
+  highlighted code blocks, real-time token streaming, text
+  selection/copying. Closes on an outside click or `Escape`.
+- **Two-column window** — editable prompt+text on the left, response on the
+  right, provider selector in the toolbar, `Ctrl+Enter` to send.
+- **Tray** — the application is resident: a monochrome raven (Corvus — the
+  korvus emblem), left click = popup with the selection, a menu with the
+  prompt library, the window, settings and quit.
+- **Global hotkeys inside the application** — assigned in Settings
+  (defaults: `Ctrl+Alt+C` popup, `Ctrl+Alt+W` window). Every prompt can
+  also get its own hotkey that opens the popup with that prompt.
+  X11 — direct XGrabKey interception, Wayland — the system GlobalShortcuts
+  portal. No external tools or DE configuration required.
+- **Prompt library** — any number of named prompts in Settings; a default
+  prompt for the main hotkey, per-prompt hotkeys, any prompt from the tray
+  submenu.
+- **AI providers**:
+  - **Claude Code CLI** — via `claude -p`, no API key (default);
+  - **Anthropic API** — official SDK, streaming (API key required);
+  - **OpenAI-compatible APIs** — OpenAI, **Ollama**, LM Studio, OpenRouter,
+    Groq, DeepSeek and any other service with `/chat/completions`
+    (configured with `base URL` + model + key; local servers need no key).
+- **Graphical settings** — prompts, hotkeys, theme, font, popup sizes,
+  timeouts, a provider manager with keys, autostart at login.
+  The config is human-readable YAML (`~/.config/kortalk/config.yaml`).
+- **Theme and fonts** — follows the environment theme (Qt) by default,
+  optionally Nord Dark / Nord Light.
+- **Two interface languages** — English (default) and Russian:
+  Settings → General → Language.
+- **PRIMARY selection is read natively** via Qt — xclip/xsel/wl-clipboard
+  are not needed. Works on X11 and Wayland.
 
-## Установка
+## Installation
 
 ```bash
 pipx install kortalk
-kortalk --check     # диагностика: провайдеры, трей, PRIMARY-выделение
+kortalk --check     # diagnostics: providers, tray, PRIMARY selection
 ```
 
-Никаких системных пакетов и флагов вроде `--system-site-packages` не
-требуется — Qt (PySide6) ставится из PyPI. Единственная внешняя зависимость —
-[Claude Code CLI](https://docs.claude.com), и только если используете
-провайдер `claude-cli`.
+No system packages or flags like `--system-site-packages` are required —
+Qt (PySide6) comes from PyPI. The only external dependency is
+[Claude Code CLI](https://docs.claude.com), and only if you use the
+`claude-cli` provider.
 
-> Конфиг хранится в `~/.config/kortalk/config.yaml` и редактируется через
-> настройки (или руками). Конфиги прежних версий (toml/ini) не используются.
+> The config lives in `~/.config/kortalk/config.yaml` and is edited via
+> Settings (or by hand). Configs of older versions (toml/ini) are not used.
 
-## Использование
+## Usage
 
 ```bash
-kortalk                       # запустить демона (трей + хоткеи)
-kortalk --popup               # popup у курсора (для скриптов/сторонних хоткеев)
-kortalk "Переведи на английский:"   # popup с разовым промптом
-kortalk --window              # окно в два столбца (алиас: --split)
-kortalk --provider ollama     # разовый запрос через конкретный провайдер
-kortalk --settings            # настройки
-kortalk --quit                # завершить работающий экземпляр
-kortalk --check               # диагностика
+kortalk                       # start the daemon (tray + hotkeys)
+kortalk --popup               # popup near the cursor (for scripts/external hotkeys)
+kortalk "Translate to English:"   # popup with a one-off prompt
+kortalk --window              # two-column window (alias: --split)
+kortalk --provider ollama     # one-off request through a specific provider
+kortalk --settings            # settings
+kortalk --quit                # quit the running instance
+kortalk --check               # diagnostics
 ```
 
-Основной сценарий: `kortalk` запускает демона, дальше всё делается из трея
-и по глобальным хоткеям. CLI-флаги оставлены для скриптов — они мгновенно
-доставляются работающему экземпляру через локальный сокет.
+The main scenario: `kortalk` starts the daemon, everything else is done
+from the tray and via global hotkeys. The CLI flags are kept for scripting —
+they are delivered to the running instance instantly over a local socket.
 
-Текст берётся из **PRIMARY selection** — достаточно выделить его мышью,
-Ctrl+C не нужен.
+The text is taken from the **PRIMARY selection** — selecting it with the
+mouse is enough, no Ctrl+C needed.
 
-## Хоткеи
+## Hotkeys
 
-Назначаются в Настройки → Клавиши, работают глобально:
+Assigned in Settings → Hotkeys (per-prompt hotkeys — on the Prompts tab),
+work globally:
 
-- **X11** — приложение перехватывает клавиши напрямую (XGrabKey),
-  работает в любом WM/DE без настройки.
-- **Wayland** — используется XDG Desktop Portal (GlobalShortcuts);
-  GNOME/KDE покажут диалог подтверждения биндинга. Если портал недоступен
-  (минималистичные композиторы) — пользуйтесь треем или повесьте
-  `kortalk --popup` на хоткей средствами композитора.
+- **X11** — the application grabs the keys directly (XGrabKey), works in
+  any WM/DE without configuration.
+- **Wayland** — the XDG Desktop Portal (GlobalShortcuts) is used;
+  GNOME/KDE will show a binding confirmation dialog. If the portal is not
+  available (minimalist compositors) — use the tray or bind
+  `kortalk --popup` to a hotkey in your compositor.
 
-## Настройка провайдеров
+## Provider setup
 
-`kortalk --settings` → вкладка «Провайдеры». Примеры:
+`kortalk --settings` → Providers tab. Examples:
 
-| Провайдер | Тип | Base URL | Модель |
+| Provider | Type | Base URL | Model |
 |---|---|---|---|
-| Claude Code CLI | claude-cli | — | *(пусто = дефолт CLI)* |
+| Claude Code CLI | claude-cli | — | *(empty = CLI default)* |
 | Anthropic API | anthropic | — | `claude-opus-4-8` |
 | OpenAI | openai | `https://api.openai.com/v1` | `gpt-4o` |
 | Ollama | openai | `http://localhost:11434/v1` | `llama3`, `qwen3`, … |
-| LM Studio | openai | `http://localhost:1234/v1` | имя загруженной модели |
-| OpenRouter | openai | `https://openrouter.ai/api/v1` | любой из каталога |
+| LM Studio | openai | `http://localhost:1234/v1` | name of the loaded model |
+| OpenRouter | openai | `https://openrouter.ai/api/v1` | anything from the catalog |
 
-«Активный провайдер» используется по умолчанию для popup; в окне провайдер
-выбирается в выпадающем списке, разово — флагом `--provider <id>`.
+The "active provider" is used by default for the popup; in the window the
+provider is picked from a dropdown, for one-off requests — with
+`--provider <id>`.
 
-## Автозапуск
+## Autostart
 
-Настройки → Общие → «Запускать при входе в систему» — создаёт
-`~/.config/autostart/kortalk.desktop` с командой `kortalk`.
+Settings → General → "Start at login" — creates
+`~/.config/autostart/kortalk.desktop` running `kortalk`.
 
-## Разработка
-
-```bash
-python3 -m venv .venv && .venv/bin/pip install -e .
-QT_QPA_PLATFORM=offscreen .venv/bin/kortalk --check   # headless-проверка
-```
-
-Структура: [src/kortalk/](src/kortalk/) — `app.py` (CLI, трей, IPC),
-`providers.py` (воркеры ИИ), `hotkeys.py` (XGrabKey / портал),
-`windows.py` (popup и главное окно), `settings_dialog.py`, `config.py`,
-`theme.py`.
-
-## Лицензия
-
-MIT, см. [LICENSE](LICENSE).
-
-## Разработка
+## Development
 
 ```bash
 git clone https://github.com/r4ven-me/kortalk && cd kortalk
 python -m venv .venv && . .venv/bin/activate
 pip install -e '.[test]' ruff
-ruff check .                        # линтер
-QT_QPA_PLATFORM=offscreen pytest    # тесты (headless)
+ruff check .                        # linter
+QT_QPA_PLATFORM=offscreen pytest    # tests (headless)
+QT_QPA_PLATFORM=offscreen kortalk --check   # headless diagnostics
 ```
 
-Логи работающего приложения: `~/.local/state/kortalk/kortalk.log`
-(подробный вывод — флаг `--debug`).
+Layout: [src/kortalk/](src/kortalk/) — `app.py` (CLI, tray, IPC),
+`providers.py` (AI workers), `hotkeys.py` (XGrabKey / portal),
+`windows.py` (popup and main window), `settings_dialog.py`, `config.py`,
+`theme.py`.
+
+Logs of the running application: `~/.local/state/kortalk/kortalk.log`
+(verbose output — the `--debug` flag).
+
+## License
+
+MIT, see [LICENSE](LICENSE).

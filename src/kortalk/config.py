@@ -1,4 +1,4 @@
-"""Конфигурация kortalk: YAML в ~/.config/kortalk/config.yaml."""
+"""kortalk configuration: YAML in ~/.config/kortalk/config.yaml."""
 
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
 GENERAL_DEFAULTS = {
-    "language": "en",           # en | ru — язык интерфейса
+    "language": "en",           # en | ru — interface language
     "theme": "system",          # system | nord-dark | nord-light
-    "font_family": "",          # "" = системный шрифт
-    "font_size": 0,             # 0 = системный размер
+    "font_family": "",          # "" = system font
+    "font_size": 0,             # 0 = system size
     "popup_width": 560,
     "popup_max_height": 600,
-    "timeout": 180,             # сек, для CLI/HTTP-запросов
-    "max_tokens": 64000,        # лимит токенов ответа (Anthropic API)
+    "timeout": 180,             # seconds, for CLI/HTTP requests
+    "max_tokens": 64000,        # response token limit (Anthropic API)
     "active_provider": "claude-cli",
     "active_prompt": "Explain",
 }
@@ -30,8 +30,8 @@ HOTKEY_DEFAULTS = {
     "window": "Ctrl+Alt+W",
 }
 
-# Промпты — пользовательские данные: создаются один раз при первом запуске
-# и дальше живут в конфиге, поэтому дефолты — на языке по умолчанию (en).
+# Prompts are user data: created once on first run and then live in the
+# config file, so the defaults are in the default language (en).
 DEFAULT_PROMPTS = [
     {"name": "Explain", "text": "Briefly explain or comment on the following text:"},
     {"name": "Translate",
@@ -47,6 +47,7 @@ DEFAULT_PROMPTS = [
 class Prompt:
     name: str
     text: str
+    hotkey: str = ""  # global hotkey that opens the popup with this prompt
 
 
 @dataclass
@@ -56,11 +57,11 @@ class Provider:
     type: str            # "claude-cli" | "anthropic" | "openai"
     model: str = ""
     api_key: str = ""
-    base_url: str = ""   # только для openai-совместимых
-    extra_args: list[str] = field(default_factory=list)  # только для claude-cli
+    base_url: str = ""   # openai-compatible only
+    extra_args: list[str] = field(default_factory=list)  # claude-cli only
 
     def needs_api_key(self) -> bool:
-        # Локальные OpenAI-совместимые серверы (Ollama, LM Studio) ключ не требуют.
+        # Local OpenAI-compatible servers (Ollama, LM Studio) need no key.
         if self.type == "anthropic":
             return True
         if self.type == "openai":
@@ -77,15 +78,15 @@ DEFAULT_PROVIDERS = [
              base_url="http://localhost:11434/v1"),
 ]
 
-# Типы стандартных провайдеров — для распознавания конфигов, испорченных
-# багом диалога настроек версий <= 0.3.0 (данные соседнего провайдера
-# записывались в предыдущий элемент списка).
+# Types of the stock providers — used to recognize configs corrupted by the
+# settings-dialog bug in versions <= 0.3.0 (data of the adjacent provider
+# was written into the previous list item).
 _DEFAULT_PROVIDER_TYPES = {p.id: p.type for p in DEFAULT_PROVIDERS}
 
 
 class Config:
-    """YAML-конфиг: секции general / hotkeys / prompts / providers.
-    Записывается на диск при каждом изменении (write-through)."""
+    """YAML config with sections general / hotkeys / prompts / providers.
+    Written to disk on every change (write-through)."""
 
     def __init__(self) -> None:
         self._data: dict = {}
@@ -93,7 +94,7 @@ class Config:
             try:
                 self._data = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
             except yaml.YAMLError:
-                # битый файл не должен блокировать запуск — работаем с дефолтами
+                # a broken file must not block startup — fall back to defaults
                 self._data = {}
         repaired = self._repair_scrambled_providers()
         changed = self._ensure_defaults()
@@ -101,11 +102,11 @@ class Config:
             self.save()
 
     def _repair_scrambled_providers(self) -> bool:
-        """Сбрасывает провайдеров к дефолтам, если конфиг перемешан багом
-        настроек версий <= 0.3.0. Признак порчи — стандартный id с чужим
-        типом (id провайдера в диалоге не редактируется, тип — да, но баг
-        переносил тип соседнего провайдера). Достоверно восстановить такие
-        записи нельзя."""
+        """Resets providers to defaults when the config was scrambled by the
+        settings bug of versions <= 0.3.0. The telltale sign is a stock id
+        with a foreign type (provider ids are not editable in the dialog,
+        types are, but the bug moved the neighbour's type over). Such
+        records cannot be restored reliably."""
         providers = self._data.get("providers")
         if not isinstance(providers, list):
             return False
@@ -145,7 +146,7 @@ class Config:
             changed = True
         return changed
 
-    # -- общие настройки ------------------------------------------------------
+    # -- general settings -----------------------------------------------------
 
     def get(self, key: str):
         default = GENERAL_DEFAULTS[key]
@@ -161,7 +162,7 @@ class Config:
         self._data["general"][key] = value
         self.save()
 
-    # -- хоткеи ----------------------------------------------------------------
+    # -- hotkeys --------------------------------------------------------------
 
     def hotkey(self, action: str) -> str:
         return str(self._data["hotkeys"].get(action, "") or "")
@@ -170,14 +171,17 @@ class Config:
         self._data["hotkeys"][action] = sequence
         self.save()
 
-    # -- промпты -----------------------------------------------------------------
+    # -- prompts --------------------------------------------------------------
 
     def prompts(self) -> list[Prompt]:
-        return [Prompt(name=str(p.get("name", "")), text=str(p.get("text", "")))
+        return [Prompt(name=str(p.get("name", "")), text=str(p.get("text", "")),
+                       hotkey=str(p.get("hotkey", "") or ""))
                 for p in self._data.get("prompts", [])]
 
     def set_prompts(self, prompts: list[Prompt]) -> None:
-        self._data["prompts"] = [{"name": p.name, "text": p.text} for p in prompts]
+        self._data["prompts"] = [
+            {"name": p.name, "text": p.text, "hotkey": p.hotkey} for p in prompts
+        ]
         self.save()
 
     def prompt_by_name(self, name: str) -> Prompt | None:
@@ -193,7 +197,7 @@ class Config:
             p = prompts[0] if prompts else Prompt(**DEFAULT_PROMPTS[0])
         return p
 
-    # -- провайдеры ---------------------------------------------------------------
+    # -- providers ------------------------------------------------------------
 
     @staticmethod
     def _provider_to_dict(p: Provider) -> dict:
@@ -245,7 +249,7 @@ class Config:
         ]
         self.save()
 
-    # -- запись ----------------------------------------------------------------------
+    # -- persistence ----------------------------------------------------------
 
     def save(self) -> None:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -254,11 +258,11 @@ class Config:
             encoding="utf-8",
         )
         try:
-            os.chmod(CONFIG_FILE, 0o600)  # в файле могут лежать API-ключи
+            os.chmod(CONFIG_FILE, 0o600)  # the file may contain API keys
         except OSError:
             pass
 
-    def sync(self) -> None:  # совместимость с прежним API
+    def sync(self) -> None:  # backward-compatible alias
         self.save()
 
     def file_path(self) -> str:
