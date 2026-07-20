@@ -17,6 +17,7 @@ import logging.handlers
 import os
 import shutil
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,6 +44,44 @@ DESKTOP_FILE = DATA_DIR / "applications" / "kortalk.desktop"
 _PROMPT_ACTION = "prompt:"
 
 log = logging.getLogger(__name__)
+
+
+def augment_path_from_login_shell() -> None:
+    """Merges the user's login-shell PATH into this process's PATH.
+
+    Apps launched from the applications menu or autostart usually inherit
+    a minimal PATH that skips shell startup files — the very place users'
+    CLI tools (~/.local/bin, npm/cargo/go bin dirs, ...) get added. Without
+    this, `claude` (and anything else kortalk shells out to) can be
+    unreachable even though it works fine from a terminal. Appended, not
+    prepended, so anything already resolvable keeps its current priority.
+
+    Runs the shell as both login AND interactive (-ilc, not just -lc):
+    zsh/bash users overwhelmingly put PATH edits in .zshrc/.bashrc, which
+    only interactive shells read — .zprofile/.profile alone would miss
+    them. Best-effort: any failure just leaves PATH as is.
+    """
+    shell = os.environ.get("SHELL") or "/bin/sh"
+    try:
+        result = subprocess.run(
+            [shell, "-ilc", 'echo -n "$PATH"'],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return
+    if result.returncode != 0:
+        return
+    # an interactive shell may print a banner/prompt fragments before our
+    # command runs — the PATH is on the last line, everything else is noise
+    shell_path = result.stdout.strip().splitlines()[-1].strip() if result.stdout.strip() else ""
+    if not shell_path:
+        return
+    current_dirs = os.environ.get("PATH", "").split(os.pathsep)
+    added = [d for d in shell_path.split(os.pathsep) if d and d not in current_dirs]
+    if added:
+        os.environ["PATH"] = os.pathsep.join(current_dirs + added)
+        log.info("PATH augmented from login shell (%s): +%s", shell, os.pathsep.join(added))
+
 
 DESKTOP_ENTRY = """\
 [Desktop Entry]
@@ -476,6 +515,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     command = args_to_command(args)
     setup_logging(args.debug)
+    augment_path_from_login_shell()
 
     if not args.check:
         if try_send_to_running(command):

@@ -13,6 +13,17 @@
 - **The API-key show/hide button no longer floats with no field next to
   it.** For Claude Code CLI (no key needed) it was left visible even
   though the key field and its label were hidden; it now hides with them.
+- **`claude` (and any other external tool) is now found when kortalk is
+  launched from the applications menu or autostart.** Such launches
+  inherit a minimal PATH that skips `.bashrc`/`.zshrc`, where most people
+  add `~/.local/bin` and friends — kortalk now merges in its login shell's
+  PATH once at startup, the same way a terminal would see it.
+- **The applications-menu entry and the autostart entry always get a
+  working `Exec=` path.** `shutil.which("kortalk")` can return nothing if
+  this very process started before `~/.local/bin` was on PATH; both now
+  fall back to resolving `sys.argv[0]`, which is how the OS actually found
+  the running process. Also dropped the extra `Categories=` entry that
+  `desktop-file-validate` flagged as risking a duplicate menu item.
 
 ### Changes
 
@@ -20,7 +31,9 @@
   a button or the response text and move it; it stays put until you close
   it or press `Escape`.
 - **Tray left click now opens the two-column window** instead of the
-  popup (still reachable from the tray menu: "Popup with selection").
+  popup (still reachable from the tray menu: "Popup with selection");
+  clicking again while it's open hides it back to the tray instead of
+  just re-focusing it.
 - **"Open in window" no longer loses context** — the original prompt and
   selected text now go to the left pane along with the answer on the
   right, instead of leaving the left pane empty.

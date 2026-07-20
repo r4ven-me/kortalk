@@ -1,10 +1,11 @@
 """Tests for app.py: the desktop launcher entry and tray-click handling."""
 
+import subprocess
 from types import SimpleNamespace
 
 from PySide6.QtWidgets import QSystemTrayIcon
 
-from kortalk.app import KortalkApp, ensure_desktop_entry
+from kortalk.app import KortalkApp, augment_path_from_login_shell, ensure_desktop_entry
 
 
 def test_ensure_desktop_entry_writes_icon_and_launcher(tmp_path):
@@ -47,6 +48,75 @@ def test_ensure_desktop_entry_falls_back_to_argv0_when_not_on_path(tmp_path, mon
     text = app_mod.DESKTOP_FILE.read_text(encoding="utf-8")
     exec_line = next(line for line in text.splitlines() if line.startswith("Exec="))
     assert exec_line == "Exec=/opt/weird/path/kortalk"
+
+
+def test_augment_path_adds_missing_login_shell_dirs(monkeypatch):
+    # regression: apps launched from the applications menu inherit a
+    # minimal PATH that skips ~/.bashrc-installed dirs (e.g. ~/.local/bin),
+    # so `claude` can be unreachable even though it works from a terminal.
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            a[0], 0, stdout="/usr/bin:/bin:/home/user/.local/bin\n", stderr="")
+    )
+
+    augment_path_from_login_shell()
+
+    import os
+    assert os.environ["PATH"] == "/usr/bin:/bin:/home/user/.local/bin"
+
+
+def test_augment_path_does_not_reorder_existing_entries(monkeypatch):
+    # a dir already on PATH keeps its current priority — only genuinely
+    # missing dirs are appended, nothing gets moved or duplicated.
+    monkeypatch.setenv("PATH", "/custom/first:/usr/bin:/bin")
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            a[0], 0, stdout="/usr/bin:/bin\n", stderr="")
+    )
+
+    augment_path_from_login_shell()
+
+    import os
+    assert os.environ["PATH"] == "/custom/first:/usr/bin:/bin"
+
+
+def test_augment_path_ignores_interactive_shell_banner_noise(monkeypatch):
+    # -ilc (interactive) is needed because PATH edits usually live in
+    # .zshrc/.bashrc, not .zprofile — but an interactive shell may print a
+    # MOTD/prompt fragment before running our command; only the last line
+    # is the actual $PATH output.
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            a[0], 0,
+            stdout="Welcome back!\nsome-plugin-banner\n/usr/bin:/bin:/home/user/.local/bin\n",
+            stderr="")
+    )
+
+    augment_path_from_login_shell()
+
+    import os
+    assert os.environ["PATH"] == "/usr/bin:/bin:/home/user/.local/bin"
+
+
+def test_augment_path_survives_a_broken_shell(monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("no such shell"))
+    )
+
+    augment_path_from_login_shell()  # must not raise
+
+    import os
+    assert os.environ["PATH"] == "/usr/bin:/bin"
 
 
 class _FakeWindow:
