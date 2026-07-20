@@ -52,7 +52,7 @@ Comment=Korvus AI popup for selected text
 Exec={exec_path}
 Icon={icon_path}
 Terminal=false
-Categories=Utility;Office;
+Categories=Utility;
 StartupNotify=false
 """
 
@@ -66,7 +66,10 @@ def ensure_desktop_entry() -> None:
     """
     try:
         icon_path = theme.install_icon_file()
-        exec_path = shutil.which("kortalk") or "kortalk"
+        # shutil.which() can miss ~/.local/bin if this process itself
+        # started before it was added to PATH — sys.argv[0] is how the OS
+        # actually found us, so it's always resolvable, unlike a bare name.
+        exec_path = shutil.which("kortalk") or str(Path(sys.argv[0]).resolve())
         DESKTOP_FILE.parent.mkdir(parents=True, exist_ok=True)
         DESKTOP_FILE.write_text(
             DESKTOP_ENTRY.format(exec_path=exec_path, icon_path=icon_path), encoding="utf-8"
@@ -305,7 +308,11 @@ class KortalkApp:
             self.handle({"action": action})
 
     def _tray_activated(self, reason) -> None:
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:  # left click
+        if reason != QSystemTrayIcon.ActivationReason.Trigger:  # left click
+            return
+        if self.main_window is not None and self.main_window.isVisible():
+            self.main_window.hide()  # click again -> back to the tray
+        else:
             self.handle({"action": "window"})
 
     # -- commands -------------------------------------------------------------

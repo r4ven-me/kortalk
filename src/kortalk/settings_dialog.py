@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -507,7 +508,10 @@ class SettingsDialog(QDialog):
         try:
             if self.autostart.isChecked():
                 AUTOSTART_FILE.parent.mkdir(parents=True, exist_ok=True)
-                exec_path = shutil.which("kortalk") or "kortalk"
+                # shutil.which() can miss ~/.local/bin if this process itself
+                # started before it was added to PATH — sys.argv[0] is how
+                # the OS actually found us, so it's always resolvable.
+                exec_path = shutil.which("kortalk") or str(Path(sys.argv[0]).resolve())
                 icon_path = theme.install_icon_file()
                 AUTOSTART_FILE.write_text(
                     AUTOSTART_DESKTOP.format(exec_path=exec_path, icon_path=icon_path),

@@ -173,6 +173,24 @@ def test_autostart_desktop_file_is_rendered(qtbot, config, tmp_path):
                for line in text.splitlines())
 
 
+def test_autostart_exec_falls_back_to_argv0_when_not_on_path(qtbot, config, monkeypatch):
+    # same regression as the applications-menu entry: shutil.which() can
+    # miss ~/.local/bin, Exec= must still be an absolute, working path.
+    import kortalk.settings_dialog as sd
+
+    monkeypatch.setattr(sd.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(sd.sys, "argv", ["/opt/weird/path/kortalk"])
+
+    dlg = SettingsDialog(config)
+    qtbot.addWidget(dlg)
+    dlg.autostart.setChecked(True)
+    dlg._save()
+
+    text = sd.AUTOSTART_FILE.read_text(encoding="utf-8")
+    exec_line = next(line for line in text.splitlines() if line.startswith("Exec="))
+    assert exec_line == "Exec=/opt/weird/path/kortalk"
+
+
 def test_dialog_builds_in_russian(qtbot, config):
     from kortalk.i18n import set_language
 
