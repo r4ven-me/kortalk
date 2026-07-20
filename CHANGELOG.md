@@ -13,6 +13,14 @@
 - **The API-key show/hide button no longer floats with no field next to
   it.** For Claude Code CLI (no key needed) it was left visible even
   though the key field and its label were hidden; it now hides with them.
+- **Settings shows the raven icon in the taskbar/window switcher** instead
+  of the WM's generic placeholder — only `MainWindow` set its own icon
+  before; the icon is now also set application-wide so every window
+  (current and future) gets it by default.
+- **`kortalk --version` matches `pyproject.toml`.** The version used to be
+  hardcoded a second time in `kortalk/__init__.py` and drifted out of sync
+  with every release; it's now read from the installed package's own
+  metadata, so there's exactly one place it can come from.
 - **`claude` (and any other external tool) is now found when kortalk is
   launched from the applications menu or autostart.** Such launches
   inherit a minimal PATH that skips `.bashrc`/`.zshrc`, where most people

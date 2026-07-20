@@ -264,6 +264,10 @@ class KortalkApp:
         theme.apply_theme(app, str(config.get("theme")))
         theme.apply_font(app, str(config.get("font_family")), int(config.get("font_size")))
         app.setQuitOnLastWindowClosed(False)
+        # Application-wide default: any top-level window that doesn't set its
+        # own icon (e.g. SettingsDialog) still gets the raven in the taskbar
+        # instead of the WM's generic placeholder.
+        app.setWindowIcon(theme.make_tray_icon())
 
         self.server = QLocalServer()
         QLocalServer.removeServer(SOCKET_NAME)  # clean up the socket after a crash
@@ -452,6 +456,7 @@ class KortalkApp:
         theme.apply_theme(self.app, str(self.config.get("theme")))
         theme.apply_font(self.app, str(self.config.get("font_family")),
                          int(self.config.get("font_size")))
+        self.app.setWindowIcon(theme.make_tray_icon())
         self.tray.setIcon(theme.make_tray_icon())
         self._rebuild_menu()
         self._apply_hotkeys()
