@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shiboken6
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCursor, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
@@ -80,11 +80,40 @@ class _StreamingBrowser(QTextBrowser):
                 scrollbar.setValue(scrollbar.maximum())
 
 
+class _DraggableCard(QFrame):
+    """Card that can be dragged by the mouse from anywhere that isn't a
+    button or the response text (those consume the press themselves) —
+    lets the user reposition the frameless popup before closing it."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._drag_from: QPoint | None = None
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_from = event.globalPosition().toPoint() - self.window().pos()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_from is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.window().move(event.globalPosition().toPoint() - self._drag_from)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_from = None
+        super().mouseReleaseEvent(event)
+
+
 class PopupWindow(QWidget):
     """Popup near the cursor: rounded corners, auto-close on an outside
-    click (Qt.Popup) and Escape, selectable Markdown response."""
+    click (Qt.Popup) and Escape, selectable Markdown response, draggable
+    by the mouse until it's closed."""
 
-    open_in_window = Signal(str)  # response text -> open in the main window
+    open_in_window = Signal(str, str)  # prompt text, response text -> open in the main window
 
     RADIUS = 12
 
@@ -97,6 +126,7 @@ class PopupWindow(QWidget):
 
         self.config = config
         self.worker: AIWorker | None = None
+        self._prompt = ""  # set by ask(); kept for "Open in window"
         width = int(config.get("popup_width"))
         self.max_height = int(config.get("popup_max_height"))
         self.setFixedWidth(width)
@@ -109,7 +139,7 @@ class PopupWindow(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
-        self.card = QFrame(self)
+        self.card = _DraggableCard(self)
         self.card.setObjectName("card")
         self.card.setStyleSheet(f"""
             QFrame#card {{
@@ -167,6 +197,7 @@ class PopupWindow(QWidget):
     # -- public API -----------------------------------------------------------
 
     def ask(self, provider, prompt: str) -> None:
+        self._prompt = prompt  # kept for "Open in window", so context isn't lost
         self.browser.begin_stream(tr("*Thinking…*"))
         self.worker = AIWorker(provider, prompt, int(self.config.get("timeout")),
                                int(self.config.get("max_tokens")))
@@ -203,9 +234,10 @@ class PopupWindow(QWidget):
         QGuiApplication.clipboard().setText(self.browser.text_content())
 
     def _open_in_window(self) -> None:
-        text = self.browser.text_content()
+        answer = self.browser.text_content()
+        prompt = self._prompt
         self.close()
-        self.open_in_window.emit(text)
+        self.open_in_window.emit(prompt, answer)
 
     def closeEvent(self, event) -> None:
         _stop_worker(self.worker)

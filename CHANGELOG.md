@@ -10,9 +10,29 @@
 - **Quitting from the tray is instant.** The tray icon is hidden first, and
   cancelling an in-flight request now closes its network stream, so workers
   blocked on a read no longer delay shutdown by up to two seconds.
+- **The API-key show/hide button no longer floats with no field next to
+  it.** For Claude Code CLI (no key needed) it was left visible even
+  though the key field and its label were hidden; it now hides with them.
 
 ### Changes
 
+- **Popup windows can be dragged** — click anywhere on the card that isn't
+  a button or the response text and move it; it stays put until you close
+  it or press `Escape`.
+- **Tray left click now opens the two-column window** instead of the
+  popup (still reachable from the tray menu: "Popup with selection").
+- **"Open in window" no longer loses context** — the original prompt and
+  selected text now go to the left pane along with the answer on the
+  right, instead of leaving the left pane empty.
+- **Provider availability status in Settings → Providers** — an inline
+  ✅/❌ line (same checks as `kortalk --check`: CLI in PATH, key/URL/model
+  set) that updates live as you edit the type, model, key or URL.
+- **A real applications-menu entry.** pip/pipx only puts the `kortalk`
+  binary on PATH, so the app now writes its own launcher (with the raven
+  icon) to `~/.local/share/applications/kortalk.desktop` on every daemon
+  start; the autostart entry uses the same icon instead of a generic one.
+- **Settings dialog tabs no longer look stuck together** — visible gaps
+  and borders between them.
 - **Hotkeys merged into the Prompts tab.** The separate Hotkeys tab is
   gone; every prompt in Settings → Prompts has its own hotkey field (opens
   the popup with that prompt applied to the current selection, list shows

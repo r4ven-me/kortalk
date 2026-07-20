@@ -10,12 +10,13 @@ cursor. Lives in the tray, streams responses, supports multiple providers.
 
 - **Popup near the cursor** — rounded corners, Markdown rendering with
   highlighted code blocks, real-time token streaming, text
-  selection/copying. Closes on an outside click or `Escape`.
+  selection/copying, draggable by the mouse. Closes on an outside click or
+  `Escape`.
 - **Two-column window** — editable prompt+text on the left, response on the
   right, provider selector in the toolbar, `Ctrl+Enter` to send.
 - **Tray** — the application is resident: a monochrome raven icon (Corvus —
-  the korvus emblem), left click = popup with the selection, a menu with
-  the prompt library, the window, settings and quit.
+  the korvus emblem), left click = open the two-column window, a menu with
+  the prompt library, a popup with the selection, settings and quit.
 - **Global hotkeys inside the application** — one prompt-to-key table in
   Settings → Prompts: each prompt has its own hotkey that opens the popup
   with that prompt and the current selection (the default prompt, "Explain",
@@ -25,7 +26,7 @@ cursor. Lives in the tray, streams responses, supports multiple providers.
   configuration required.
 - **Prompt library** — any number of named prompts in Settings, each with
   its own hotkey and reachable from the tray submenu; one is marked as the
-  default (used by the tray's left-click popup).
+  default (used by the prompt's own popup hotkey).
 - **AI providers**:
   - **Claude Code CLI** — via `claude -p`, no API key (default);
   - **Anthropic API** — official SDK, streaming (API key required);

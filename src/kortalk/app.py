@@ -306,7 +306,7 @@ class KortalkApp:
 
     def _tray_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:  # left click
-            self.handle({"action": "popup"})
+            self.handle({"action": "window"})
 
     # -- commands -------------------------------------------------------------
 
@@ -375,8 +375,9 @@ class KortalkApp:
         window.raise_()
         window.activateWindow()
 
-    def _popup_to_window(self, answer: str) -> None:
+    def _popup_to_window(self, prompt: str, answer: str) -> None:
         window = self._ensure_main_window()
+        window.set_input(prompt)  # keep the original context, not just the answer
         window.set_output(answer)
         window.show()
         window.raise_()
