@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kortalk"
-version = "0.5.1"
+version = "0.5.2"
 description = "Korvus AI popup: selected text → Claude, OpenAI, local models. Tray, streaming, two languages."
 readme = "README.md"
 license = { text = "MIT" }
@@ -36,6 +36,9 @@ kortalk = "kortalk.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+kortalk = ["assets/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
