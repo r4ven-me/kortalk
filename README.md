@@ -1,6 +1,6 @@
 # kortalk
 
-**Korvus AI popup** — part of the **korvus** family (korserver, korctl, kortalk).
+**Korvus AI popup** — part of the **korvus** family apps.
 An AI popup for selected text in the spirit of
 [Crow Translate](https://crow-translate.github.io/): select text with the
 mouse → press a hotkey → a window with the AI response pops up near the
@@ -13,17 +13,19 @@ cursor. Lives in the tray, streams responses, supports multiple providers.
   selection/copying. Closes on an outside click or `Escape`.
 - **Two-column window** — editable prompt+text on the left, response on the
   right, provider selector in the toolbar, `Ctrl+Enter` to send.
-- **Tray** — the application is resident: a monochrome raven (Corvus — the
-  korvus emblem), left click = popup with the selection, a menu with the
-  prompt library, the window, settings and quit.
-- **Global hotkeys inside the application** — assigned in Settings
-  (defaults: `Ctrl+Alt+C` popup, `Ctrl+Alt+W` window). Every prompt can
-  also get its own hotkey that opens the popup with that prompt.
-  X11 — direct XGrabKey interception, Wayland — the system GlobalShortcuts
-  portal. No external tools or DE configuration required.
-- **Prompt library** — any number of named prompts in Settings; a default
-  prompt for the main hotkey, per-prompt hotkeys, any prompt from the tray
-  submenu.
+- **Tray** — the application is resident: a monochrome raven icon (Corvus —
+  the korvus emblem), left click = popup with the selection, a menu with
+  the prompt library, the window, settings and quit.
+- **Global hotkeys inside the application** — one prompt-to-key table in
+  Settings → Prompts: each prompt has its own hotkey that opens the popup
+  with that prompt and the current selection (the default prompt, "Explain",
+  ships with `Ctrl+Alt+C`), plus a separate hotkey to open the two-column
+  window (`Ctrl+Alt+W` by default). X11 — direct XGrabKey interception,
+  Wayland — the system GlobalShortcuts portal. No external tools or DE
+  configuration required.
+- **Prompt library** — any number of named prompts in Settings, each with
+  its own hotkey and reachable from the tray submenu; one is marked as the
+  default (used by the tray's left-click popup).
 - **AI providers**:
   - **Claude Code CLI** — via `claude -p`, no API key (default);
   - **Anthropic API** — official SDK, streaming (API key required);
@@ -77,8 +79,9 @@ mouse is enough, no Ctrl+C needed.
 
 ## Hotkeys
 
-Assigned in Settings → Hotkeys (per-prompt hotkeys — on the Prompts tab),
-work globally:
+Assigned in Settings → Prompts — the "Open window" hotkey at the top of the
+tab, and one hotkey per prompt in the list below it. All of them work
+globally:
 
 - **X11** — the application grabs the keys directly (XGrabKey), works in
   any WM/DE without configuration.
@@ -127,6 +130,12 @@ Layout: [src/kortalk/](src/kortalk/) — `app.py` (CLI, tray, IPC),
 
 Logs of the running application: `~/.local/state/kortalk/kortalk.log`
 (verbose output — the `--debug` flag).
+
+## Credits
+
+The tray/window raven icon is based on the
+["raven" icon](https://www.svgrepo.com/svg/156257/raven) from SVG Repo,
+recoloured at runtime to match the active theme.
 
 ## License
 

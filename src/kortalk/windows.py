@@ -102,12 +102,9 @@ class PopupWindow(QWidget):
         self.setFixedWidth(width)
 
         app = QGuiApplication.instance()
-        dark = theme.is_dark(app)
-        bg = theme.NORD["n00"] if dark else theme.NORD["n6"]
-        fg = theme.NORD["n5"] if dark else theme.NORD["n0"]
-        border = theme.NORD["n3"] if dark else theme.NORD["n4"]
-        muted = theme.NORD["n4"] if dark else theme.NORD["n3"]
-        code_bg = theme.NORD["n1"] if dark else theme.NORD["n5"]
+        colors = theme.card_colors(app)
+        bg, fg = colors["bg"], colors["fg"]
+        border, muted, code_bg = colors["border"], colors["muted"], colors["code_bg"]
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -229,6 +226,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("kortalk")
         self.resize(960, 560)
         self.setWindowIcon(theme.make_tray_icon())
+        theme.apply_window_theme(self)
 
         toolbar = QToolBar()
         toolbar.setMovable(False)
@@ -276,6 +274,10 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self.close)
 
         self.statusBar().showMessage(tr("Ready"))
+
+    def refresh_theme(self) -> None:
+        self.setWindowIcon(theme.make_tray_icon())
+        theme.apply_window_theme(self)
 
     def reload_providers(self) -> None:
         self.provider_combo.blockSignals(True)

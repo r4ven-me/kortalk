@@ -9,7 +9,10 @@ def test_defaults_created_on_first_run(config, config_dir):
     assert (config_dir / "config.yaml").exists()
     assert [p.id for p in config.providers()] == [p.id for p in DEFAULT_PROVIDERS]
     assert config.active_provider().id == "claude-cli"
-    assert config.hotkey("popup") == "Ctrl+Alt+C"
+    # the default active prompt carries the classic popup hotkey
+    assert config.active_prompt().name == "Explain"
+    assert config.active_prompt().hotkey == "Ctrl+Alt+C"
+    assert config.hotkey("window") == "Ctrl+Alt+W"
 
 
 def test_set_get_roundtrip(config):
@@ -21,13 +24,13 @@ def test_set_get_roundtrip(config):
 
 def test_prompt_hotkey_roundtrip(config):
     prompts = config.prompts()
-    assert all(p.hotkey == "" for p in prompts)  # no hotkeys by default
-    prompts[0].hotkey = "Ctrl+Alt+E"
+    assert prompts[1].hotkey == ""  # "Translate" has no hotkey by default
+    prompts[1].hotkey = "Ctrl+Alt+E"
     config.set_prompts(prompts)
 
     reloaded = Config().prompts()
-    assert reloaded[0].hotkey == "Ctrl+Alt+E"
-    assert reloaded[1].hotkey == ""
+    assert reloaded[1].hotkey == "Ctrl+Alt+E"
+    assert reloaded[2].hotkey == ""
 
 
 def test_prompts_without_hotkey_field_are_readable(config_dir):
@@ -38,6 +41,49 @@ def test_prompts_without_hotkey_field_are_readable(config_dir):
     )
     prompts = Config().prompts()
     assert prompts[0] == Prompt(name="Old", text="Old text", hotkey="")
+
+
+def test_popup_hotkey_migrates_to_active_prompt(config_dir):
+    # <= 0.4.x config: a standalone "popup" hotkey, independent of prompts
+    old = {
+        "general": {"active_prompt": "Translate"},
+        "hotkeys": {"popup": "Ctrl+Alt+P", "window": "Ctrl+Alt+W"},
+        "prompts": [
+            {"name": "Explain", "text": "Explain:"},
+            {"name": "Translate", "text": "Translate:"},
+        ],
+    }
+    (config_dir / "config.yaml").write_text(
+        yaml.safe_dump(old, allow_unicode=True), encoding="utf-8"
+    )
+
+    cfg = Config()
+
+    # moved onto the prompt that was active at the time, not left dangling
+    assert cfg.prompt_by_name("Translate").hotkey == "Ctrl+Alt+P"
+    assert cfg.prompt_by_name("Explain").hotkey == ""
+    assert cfg.hotkey("window") == "Ctrl+Alt+W"
+    # re-reading the now-migrated, saved config leaves it untouched
+    reloaded = Config()
+    assert reloaded.prompt_by_name("Translate").hotkey == "Ctrl+Alt+P"
+    assert reloaded.prompt_by_name("Explain").hotkey == ""
+
+
+def test_popup_hotkey_migration_does_not_override_existing_prompt_hotkey(config_dir):
+    old = {
+        "general": {"active_prompt": "Translate"},
+        "hotkeys": {"popup": "Ctrl+Alt+P"},
+        "prompts": [
+            {"name": "Translate", "text": "Translate:", "hotkey": "Ctrl+Alt+T"},
+        ],
+    }
+    (config_dir / "config.yaml").write_text(
+        yaml.safe_dump(old, allow_unicode=True), encoding="utf-8"
+    )
+
+    cfg = Config()
+
+    assert cfg.prompt_by_name("Translate").hotkey == "Ctrl+Alt+T"
 
 
 def test_scrambled_providers_are_reset(config_dir):

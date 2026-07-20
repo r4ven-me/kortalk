@@ -26,14 +26,16 @@ GENERAL_DEFAULTS = {
 }
 
 HOTKEY_DEFAULTS = {
-    "popup": "Ctrl+Alt+C",
     "window": "Ctrl+Alt+W",
 }
 
 # Prompts are user data: created once on first run and then live in the
-# config file, so the defaults are in the default language (en).
+# config file, so the defaults are in the default language (en). "Explain"
+# is the default active prompt, so it keeps the classic Ctrl+Alt+C binding
+# that used to be a separate, prompt-independent "popup" hotkey.
 DEFAULT_PROMPTS = [
-    {"name": "Explain", "text": "Briefly explain or comment on the following text:"},
+    {"name": "Explain", "text": "Briefly explain or comment on the following text:",
+     "hotkey": "Ctrl+Alt+C"},
     {"name": "Translate",
      "text": "Translate the following text to English (if it is already in English — "
              "to Russian), reply with the translation only:"},
@@ -97,8 +99,9 @@ class Config:
                 # a broken file must not block startup — fall back to defaults
                 self._data = {}
         repaired = self._repair_scrambled_providers()
+        migrated = self._migrate_popup_hotkey()
         changed = self._ensure_defaults()
-        if repaired or changed or not CONFIG_FILE.exists():
+        if repaired or migrated or changed or not CONFIG_FILE.exists():
             self.save()
 
     def _repair_scrambled_providers(self) -> bool:
@@ -124,6 +127,23 @@ class Config:
             "defaults restored (set API keys again in Settings → Providers).",
             file=sys.stderr,
         )
+        return True
+
+    def _migrate_popup_hotkey(self) -> bool:
+        """<= 0.4.x had a standalone "popup" hotkey, independent of any
+        prompt. Hotkey assignment now lives entirely on prompts (Settings →
+        Prompts), so a configured value is carried over to the active
+        prompt if that prompt doesn't already have its own hotkey."""
+        hotkeys = self._data.get("hotkeys")
+        if not isinstance(hotkeys, dict) or "popup" not in hotkeys:
+            return False
+        value = str(hotkeys.pop("popup") or "")
+        if value:
+            active_name = self._data.get("general", {}).get("active_prompt")
+            for p in self._data.get("prompts") or []:
+                if isinstance(p, dict) and p.get("name") == active_name and not p.get("hotkey"):
+                    p["hotkey"] = value
+                    break
         return True
 
     def _ensure_defaults(self) -> bool:

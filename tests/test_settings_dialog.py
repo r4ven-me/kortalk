@@ -93,17 +93,38 @@ def test_prompt_hotkey_persists_to_the_edited_prompt_only(qtbot, config):
     dlg = SettingsDialog(config)
     qtbot.addWidget(dlg)
 
-    dlg.prompt_list.setCurrentRow(1)  # "Translate"
+    dlg.prompt_list.setCurrentRow(1)  # "Translate", no hotkey by default
     dlg.prompt_hotkey.setKeySequence(QKeySequence("Ctrl+Alt+T"))
-    dlg.prompt_list.setCurrentRow(0)
-    # after switching rows the editor shows the other prompt's (empty) hotkey
-    assert dlg.prompt_hotkey.keySequence().isEmpty()
+    dlg.prompt_list.setCurrentRow(0)  # "Explain" — ships with Ctrl+Alt+C
+    # after switching rows the editor shows Explain's own hotkey, untouched
+    assert dlg.prompt_hotkey.keySequence() == QKeySequence("Ctrl+Alt+C")
     dlg._save()
 
     hotkeys = {p.name: p.hotkey for p in config.prompts()}
     assert hotkeys["Translate"] == "Ctrl+Alt+T"
-    assert hotkeys["Explain"] == ""
+    assert hotkeys["Explain"] == "Ctrl+Alt+C"
     assert hotkeys["Fix"] == ""
+
+
+def test_prompt_list_label_shows_the_hotkey(qtbot, config):
+    dlg = SettingsDialog(config)
+    qtbot.addWidget(dlg)
+
+    dlg.prompt_list.setCurrentRow(0)  # "Explain"
+    assert "Ctrl+Alt+C" in dlg.prompt_list.currentItem().text()
+
+    dlg.prompt_list.setCurrentRow(1)  # "Translate", no hotkey
+    assert dlg.prompt_list.currentItem().text() == "Translate"
+
+
+def test_open_window_hotkey_lives_on_the_prompts_tab(qtbot, config):
+    dlg = SettingsDialog(config)
+    qtbot.addWidget(dlg)
+
+    dlg.hotkey_window.setKeySequence(QKeySequence("Ctrl+Alt+X"))
+    dlg._save()
+
+    assert config.hotkey("window") == "Ctrl+Alt+X"
 
 
 def test_autostart_desktop_file_is_rendered(qtbot, config, tmp_path):

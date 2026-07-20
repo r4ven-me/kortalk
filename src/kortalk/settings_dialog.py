@@ -1,4 +1,4 @@
-"""Settings dialog: general, prompts, hotkeys, providers."""
+"""Settings dialog: general, prompts & hotkeys, providers."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .config import Config, Prompt, Provider
 from .i18n import tr
 
@@ -56,6 +57,10 @@ PROVIDER_TYPES = [
 _KEY_FMT = QKeySequence.SequenceFormat.PortableText
 
 
+def _prompt_label(p: Prompt) -> str:
+    return f"{p.name}   —   {p.hotkey}" if p.hotkey else p.name
+
+
 class SettingsDialog(QDialog):
     saved = Signal()
 
@@ -64,11 +69,11 @@ class SettingsDialog(QDialog):
         self.config = config
         self.setWindowTitle(tr("Settings — kortalk"))
         self.resize(680, 520)
+        theme.apply_window_theme(self)
 
         tabs = QTabWidget()
         tabs.addTab(self._build_general_tab(), tr("General"))
         tabs.addTab(self._build_prompts_tab(), tr("Prompts"))
-        tabs.addTab(self._build_hotkeys_tab(), tr("Hotkeys"))
         tabs.addTab(self._build_providers_tab(), tr("Providers"))
 
         buttons = QDialogButtonBox(
@@ -153,18 +158,31 @@ class SettingsDialog(QDialog):
         form.addRow("", QLabel(f"<i>{settings_path}</i>"))
         return page
 
-    # -- "Prompts" tab --------------------------------------------------------
+    # -- "Prompts" tab: prompt library + all hotkey assignment ----------------
 
     def _build_prompts_tab(self) -> QWidget:
         page = QWidget()
-        layout = QHBoxLayout(page)
+        outer = QVBoxLayout(page)
+
+        window_row = QHBoxLayout()
+        window_row.addWidget(QLabel(tr("Open window:")))
+        self.hotkey_window = QKeySequenceEdit(QKeySequence(self.config.hotkey("window")))
+        window_row.addWidget(self.hotkey_window, 1)
+        clear_window = QPushButton(tr("Clear"))
+        clear_window.clicked.connect(self.hotkey_window.clear)
+        window_row.addWidget(clear_window)
+        outer.addLayout(window_row)
+
+        split = QHBoxLayout()
+        outer.addLayout(split, 1)
 
         left = QVBoxLayout()
         self.prompt_list = QListWidget()
         active_name = str(self.config.get("active_prompt"))
         for p in self.config.prompts():
-            item = QListWidgetItem(p.name)
-            item.setData(Qt.ItemDataRole.UserRole, Prompt(p.name, p.text, p.hotkey))
+            prompt = Prompt(p.name, p.text, p.hotkey)
+            item = QListWidgetItem(_prompt_label(prompt))
+            item.setData(Qt.ItemDataRole.UserRole, prompt)
             self.prompt_list.addItem(item)
         self.prompt_list.currentItemChanged.connect(self._prompt_row_changed)
         left.addWidget(self.prompt_list)
@@ -178,12 +196,12 @@ class SettingsDialog(QDialog):
         btn_row.addWidget(del_btn)
         btn_row.addStretch()
         left.addLayout(btn_row)
-        layout.addLayout(left, 1)
+        split.addLayout(left, 1)
 
         right = QVBoxLayout()
         right.addWidget(QLabel(tr("Name:")))
         self.prompt_name = QLineEdit()
-        self.prompt_name.textEdited.connect(self._sync_prompt_name)
+        self.prompt_name.textEdited.connect(self._sync_prompt_item)
         right.addWidget(self.prompt_name)
         right.addWidget(QLabel(tr("Prompt text (the selection is appended after it):")))
         self.prompt_text = QPlainTextEdit()
@@ -192,6 +210,7 @@ class SettingsDialog(QDialog):
         hotkey_row = QHBoxLayout()
         hotkey_row.addWidget(QLabel(tr("Hotkey (popup with this prompt):")))
         self.prompt_hotkey = QKeySequenceEdit()
+        self.prompt_hotkey.keySequenceChanged.connect(self._sync_prompt_item)
         hotkey_row.addWidget(self.prompt_hotkey, 1)
         hotkey_clear = QPushButton(tr("Clear"))
         hotkey_clear.clicked.connect(self.prompt_hotkey.clear)
@@ -200,14 +219,20 @@ class SettingsDialog(QDialog):
 
         self.prompt_active = QCheckBox(tr("Default prompt (for tray/hotkey popup)"))
         right.addWidget(self.prompt_active)
-        layout.addLayout(right, 2)
+        split.addLayout(right, 2)
+
+        outer.addWidget(QLabel("<i>" + tr(
+            "X11: keys are grabbed by the application directly.<br>"
+            "Wayland: the system GlobalShortcuts portal is used —<br>"
+            "the compositor may show a confirmation dialog."
+        ) + "</i>"))
 
         self._loading_prompt = False
         self._active_prompt_name = active_name
         if self.prompt_list.count():
             row = 0
             for i in range(self.prompt_list.count()):
-                if self.prompt_list.item(i).text() == active_name:
+                if self.prompt_list.item(i).data(Qt.ItemDataRole.UserRole).name == active_name:
                     row = i
                     break
             self.prompt_list.setCurrentRow(row)
@@ -239,21 +264,27 @@ class SettingsDialog(QDialog):
         p.text = self.prompt_text.toPlainText().strip()
         p.hotkey = self.prompt_hotkey.keySequence().toString(_KEY_FMT)
         item.setData(Qt.ItemDataRole.UserRole, p)
-        item.setText(p.name)
+        item.setText(_prompt_label(p))
 
     def _active_prompt_toggled(self, on: bool) -> None:
         if self._loading_prompt or not on:
             return
         self._active_prompt_name = self.prompt_name.text().strip()
 
-    def _sync_prompt_name(self, text: str) -> None:
+    def _sync_prompt_item(self, *_args) -> None:
+        # live-updates the list label while the name/hotkey fields are edited
         item = self.prompt_list.currentItem()
-        if item is not None:
-            item.setText(text)
+        if item is None or self._loading_prompt:
+            return
+        p: Prompt = item.data(Qt.ItemDataRole.UserRole)
+        p.name = self.prompt_name.text().strip() or p.name
+        p.hotkey = self.prompt_hotkey.keySequence().toString(_KEY_FMT)
+        item.setData(Qt.ItemDataRole.UserRole, p)
+        item.setText(_prompt_label(p))
 
     def _add_prompt(self) -> None:
         p = Prompt(name=tr("New prompt {n}").format(n=self.prompt_list.count() + 1), text="")
-        item = QListWidgetItem(p.name)
+        item = QListWidgetItem(_prompt_label(p))
         item.setData(Qt.ItemDataRole.UserRole, p)
         self.prompt_list.addItem(item)
         self.prompt_list.setCurrentItem(item)
@@ -263,38 +294,6 @@ class SettingsDialog(QDialog):
             QMessageBox.information(self, "kortalk", tr("Cannot delete the last prompt."))
             return
         self.prompt_list.takeItem(self.prompt_list.currentRow())
-
-    # -- "Hotkeys" tab --------------------------------------------------------
-
-    def _build_hotkeys_tab(self) -> QWidget:
-        page = QWidget()
-        form = QFormLayout(page)
-
-        self.hotkey_popup = QKeySequenceEdit(QKeySequence(self.config.hotkey("popup")))
-        form.addRow(tr("Popup with selection:"), self.hotkey_popup)
-
-        self.hotkey_window = QKeySequenceEdit(QKeySequence(self.config.hotkey("window")))
-        form.addRow(tr("Open window:"), self.hotkey_window)
-
-        clear_row = QHBoxLayout()
-        clear_popup = QPushButton(tr("Clear popup"))
-        clear_popup.clicked.connect(self.hotkey_popup.clear)
-        clear_window = QPushButton(tr("Clear window"))
-        clear_window.clicked.connect(self.hotkey_window.clear)
-        clear_row.addWidget(clear_popup)
-        clear_row.addWidget(clear_window)
-        clear_row.addStretch()
-        form.addRow("", clear_row)
-
-        form.addRow("", QLabel("<i>" + tr(
-            "Per-prompt hotkeys are set on the Prompts tab."
-        ) + "</i>"))
-        form.addRow("", QLabel("<i>" + tr(
-            "X11: keys are grabbed by the application directly.<br>"
-            "Wayland: the system GlobalShortcuts portal is used —<br>"
-            "the compositor may show a confirmation dialog."
-        ) + "</i>"))
-        return page
 
     # -- "Providers" tab ------------------------------------------------------
 
@@ -477,7 +476,6 @@ class SettingsDialog(QDialog):
             self._active_prompt_name = prompts[0].name
         self.config.set("active_prompt", self._active_prompt_name)
 
-        self.config.set_hotkey("popup", self.hotkey_popup.keySequence().toString(_KEY_FMT))
         self.config.set_hotkey("window", self.hotkey_window.keySequence().toString(_KEY_FMT))
 
         for i in range(self.provider_list.count()):

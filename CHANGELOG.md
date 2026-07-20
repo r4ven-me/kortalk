@@ -13,14 +13,22 @@
 
 ### Changes
 
-- **Per-prompt global hotkeys.** Every prompt in Settings → Prompts can get
-  its own key combination that opens the popup with that prompt applied to
-  the current selection. The tray submenu shows the assigned hotkeys.
-- **New tray icon** — a raven head in profile with a heavy bill instead of
-  the cartoonish full-body bird.
-- **Nord Dark is darker** — window backgrounds use a deeper Polar Night
-  shade; windows get a 1px border so they stand out against same-coloured
-  backgrounds.
+- **Hotkeys merged into the Prompts tab.** The separate Hotkeys tab is
+  gone; every prompt in Settings → Prompts has its own hotkey field (opens
+  the popup with that prompt applied to the current selection, list shows
+  the assignment), plus one "Open window" hotkey at the top of the same
+  tab. Configs from earlier versions are migrated automatically: a
+  configured "popup" hotkey moves to the active prompt if it doesn't
+  already have one of its own.
+- **New tray icon** — a raven silhouette
+  ([source](https://www.svgrepo.com/svg/156257/raven)), recoloured at
+  runtime for light and dark themes, instead of the previous hand-drawn
+  bird.
+- **Settings dialog and the split window now use the same surface colours
+  as the popup**, regardless of the selected theme (system/Nord), so all
+  three windows read as one flat, consistent surface instead of drifting
+  apart under the native/system palette. Nord Dark itself is also darker —
+  window backgrounds use a deeper Polar Night shade.
 - All source comments, the README and the changelog are English-only; the
   interface still ships in English and Russian (Settings → General →
   Language).

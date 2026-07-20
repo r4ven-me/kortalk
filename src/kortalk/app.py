@@ -152,7 +152,8 @@ def run_selftest(config: Config) -> int:
     active = config.active_provider()
     print(f"\nActive provider: {active.name} ({active.type}"
           + (f", {active.model}" if active.model else "") + ")")
-    print(f"Hotkeys: popup={config.hotkey('popup') or '—'}, "
+    active_prompt = config.active_prompt()
+    print(f"Hotkeys: {active_prompt.name}={active_prompt.hotkey or '—'}, "
           f"window={config.hotkey('window') or '—'}")
     print(f"Settings file: {config.file_path()}")
     print("All good." if ok else "Issues found, see the recommendations above.")
@@ -241,9 +242,10 @@ class KortalkApp:
 
     def _update_tooltip(self) -> None:
         provider = self.config.active_provider()
+        active_prompt = self.config.active_prompt()
         lines = [f"kortalk — {provider.name}"]
-        if self.config.hotkey("popup"):
-            lines.append(f"Popup: {self.config.hotkey('popup')}")
+        if active_prompt.hotkey:
+            lines.append(f"{active_prompt.name}: {active_prompt.hotkey}")
         if self.hotkeys_note():
             lines.append(self.hotkeys_note())
         self.tray.setToolTip("\n".join(lines))
@@ -255,7 +257,6 @@ class KortalkApp:
 
     def _apply_hotkeys(self) -> None:
         bindings = {
-            "popup": self.config.hotkey("popup"),
             "window": self.config.hotkey("window"),
         }
         for p in self.config.prompts():
@@ -377,6 +378,7 @@ class KortalkApp:
         self._apply_hotkeys()
         if self.main_window is not None:
             self.main_window.reload_providers()
+            self.main_window.refresh_theme()
 
     def quit(self) -> None:
         self.tray.hide()  # first: the cleanup below may take a moment

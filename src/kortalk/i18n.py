@@ -52,7 +52,6 @@ RU: dict[str, str] = {
     "Settings — kortalk": "Настройки — kortalk",
     "General": "Общие",
     "Prompts": "Промпты",
-    "Hotkeys": "Клавиши",
     "Providers": "Провайдеры",
     "Language:": "Язык:",
     "(applies fully after restart)": "(полностью применяется после перезапуска)",
@@ -78,13 +77,7 @@ RU: dict[str, str] = {
         "Промпт по умолчанию (для popup из трея/хоткея)",
     "New prompt {n}": "Новый промпт {n}",
     "Cannot delete the last prompt.": "Нельзя удалить последний промпт.",
-    # -- settings: hotkeys ----------------------------------------------------
-    "Popup with selection:": "Popup с выделением:",
     "Open window:": "Открыть окно:",
-    "Clear popup": "Очистить popup",
-    "Clear window": "Очистить окно",
-    "Per-prompt hotkeys are set on the Prompts tab.":
-        "Клавиши отдельных промптов назначаются на вкладке «Промпты».",
     "X11: keys are grabbed by the application directly.<br>"
     "Wayland: the system GlobalShortcuts portal is used —<br>"
     "the compositor may show a confirmation dialog.":
