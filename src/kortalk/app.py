@@ -36,11 +36,43 @@ from .windows import MainWindow, PopupWindow
 SOCKET_NAME = f"kortalk-{getpass.getuser()}"
 LOG_DIR = Path(os.environ.get("XDG_STATE_HOME",
                               str(Path.home() / ".local" / "state"))) / "kortalk"
+DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+DESKTOP_FILE = DATA_DIR / "applications" / "kortalk.desktop"
 
 # hotkey action prefix for "open the popup with a specific prompt"
 _PROMPT_ACTION = "prompt:"
 
 log = logging.getLogger(__name__)
+
+DESKTOP_ENTRY = """\
+[Desktop Entry]
+Type=Application
+Name=kortalk
+Comment=Korvus AI popup for selected text
+Exec={exec_path}
+Icon={icon_path}
+Terminal=false
+Categories=Utility;Office;
+StartupNotify=false
+"""
+
+
+def ensure_desktop_entry() -> None:
+    """Installs an applications-menu launcher entry with the app icon.
+
+    pip/pipx only puts the `kortalk` binary on PATH — there is no install
+    hook for a per-user XDG menu entry, so the app writes its own on every
+    daemon start (idempotent, and picks up icon/path changes on upgrade).
+    """
+    try:
+        icon_path = theme.install_icon_file()
+        exec_path = shutil.which("kortalk") or "kortalk"
+        DESKTOP_FILE.parent.mkdir(parents=True, exist_ok=True)
+        DESKTOP_FILE.write_text(
+            DESKTOP_ENTRY.format(exec_path=exec_path, icon_path=icon_path), encoding="utf-8"
+        )
+    except OSError:
+        pass  # non-critical: the app still runs fine from the tray/CLI
 
 
 def setup_logging(debug: bool) -> None:
@@ -456,6 +488,7 @@ def main(argv: list[str] | None = None) -> int:
             return run_selftest(config)
 
         kortalk = KortalkApp(app, config)
+        ensure_desktop_entry()
         _signal_timer = install_signal_handlers(kortalk)  # noqa: F841 — keep a reference
         log.info("kortalk %s started: platform=%s, hotkeys=%s",
                  __version__, QGuiApplication.platformName(), kortalk.hotkeys.backend)

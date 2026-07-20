@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from . import theme
 from .config import Config, Prompt, Provider
 from .i18n import tr
+from .providers import check_provider
 
 AUTOSTART_FILE = Path.home() / ".config" / "autostart" / "kortalk.desktop"
 
@@ -43,7 +44,7 @@ Type=Application
 Name=kortalk
 Comment=Korvus AI popup for selected text
 Exec={exec_path}
-Icon=applications-education-language
+Icon={icon_path}
 X-GNOME-Autostart-enabled=true
 """
 
@@ -331,30 +332,35 @@ class SettingsDialog(QDialog):
         for type_id, label in PROVIDER_TYPES:
             self.p_type.addItem(tr(label), type_id)
         self.p_type.currentIndexChanged.connect(self._type_changed)
+        self.p_type.currentIndexChanged.connect(self._update_status)
         form.addRow(tr("Type:"), self.p_type)
 
         self.p_model = QLineEdit()
         self.p_model.setPlaceholderText(tr("e.g. claude-opus-4-8 / gpt-4o / llama3"))
+        self.p_model.textChanged.connect(self._update_status)
         form.addRow(tr("Model:"), self.p_model)
 
         self.p_api_key = QLineEdit()
         self.p_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.p_api_key.textChanged.connect(self._update_status)
         key_row = QHBoxLayout()
         key_row.addWidget(self.p_api_key)
-        show_btn = QPushButton("👁")
-        show_btn.setCheckable(True)
-        show_btn.setFixedWidth(34)
-        show_btn.toggled.connect(
+        self.p_api_key_show = QPushButton("👁")
+        self.p_api_key_show.setToolTip(tr("Show/hide the API key"))
+        self.p_api_key_show.setCheckable(True)
+        self.p_api_key_show.setFixedWidth(34)
+        self.p_api_key_show.toggled.connect(
             lambda on: self.p_api_key.setEchoMode(
                 QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password
             )
         )
-        key_row.addWidget(show_btn)
+        key_row.addWidget(self.p_api_key_show)
         self.p_api_key_label = QLabel(tr("API key:"))
         form.addRow(self.p_api_key_label, key_row)
 
         self.p_base_url = QLineEdit()
         self.p_base_url.setPlaceholderText(tr("e.g. http://localhost:11434/v1"))
+        self.p_base_url.textChanged.connect(self._update_status)
         self.p_base_url_label = QLabel("Base URL:")
         form.addRow(self.p_base_url_label, self.p_base_url)
 
@@ -362,6 +368,9 @@ class SettingsDialog(QDialog):
         self.p_extra_args.setPlaceholderText(tr("extra claude arguments"))
         self.p_extra_args_label = QLabel(tr("CLI arguments:"))
         form.addRow(self.p_extra_args_label, self.p_extra_args)
+
+        self.p_status = QLabel()
+        form.addRow(tr("Status:"), self.p_status)
 
         self.active_check = QCheckBox(tr("Active provider (default)"))
         form.addRow("", self.active_check)
@@ -395,6 +404,7 @@ class SettingsDialog(QDialog):
         self.active_check.setChecked(p.id == str(self.config.get("active_provider")))
         self._loading = False
         self._type_changed()
+        self._update_status()
 
     def _store_form(self, item: QListWidgetItem | None) -> None:
         if item is None or self._loading:
@@ -416,10 +426,21 @@ class SettingsDialog(QDialog):
         is_openai = provider_type == "openai"
         self.p_api_key.setVisible(not is_cli)
         self.p_api_key_label.setVisible(not is_cli)
+        self.p_api_key_show.setVisible(not is_cli)
         self.p_base_url.setVisible(is_openai)
         self.p_base_url_label.setVisible(is_openai)
         self.p_extra_args.setVisible(is_cli)
         self.p_extra_args_label.setVisible(is_cli)
+
+    def _update_status(self) -> None:
+        provider = Provider(
+            id="", name="", type=self.p_type.currentData() or "",
+            model=self.p_model.text().strip(),
+            api_key=self.p_api_key.text().strip(),
+            base_url=self.p_base_url.text().strip(),
+        )
+        ok, message = check_provider(provider)
+        self.p_status.setText(("✅ " if ok else "❌ ") + message)
 
     def _sync_item_name(self, text: str) -> None:
         item = self.provider_list.currentItem()
@@ -487,8 +508,10 @@ class SettingsDialog(QDialog):
             if self.autostart.isChecked():
                 AUTOSTART_FILE.parent.mkdir(parents=True, exist_ok=True)
                 exec_path = shutil.which("kortalk") or "kortalk"
+                icon_path = theme.install_icon_file()
                 AUTOSTART_FILE.write_text(
-                    AUTOSTART_DESKTOP.format(exec_path=exec_path), encoding="utf-8"
+                    AUTOSTART_DESKTOP.format(exec_path=exec_path, icon_path=icon_path),
+                    encoding="utf-8",
                 )
             elif AUTOSTART_FILE.exists():
                 AUTOSTART_FILE.unlink()

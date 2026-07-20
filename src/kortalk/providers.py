@@ -21,6 +21,29 @@ from .i18n import tr
 log = logging.getLogger(__name__)
 
 
+def check_provider(p: Provider) -> tuple[bool, str]:
+    """Static availability check for a provider — the same checks behind
+    `kortalk --check`, reused by the settings dialog. No network calls: it
+    only checks what AIWorker itself would refuse to start without."""
+    if p.type == "claude-cli":
+        if shutil.which("claude"):
+            return True, tr("claude found in PATH.")
+        return False, tr("claude not found in PATH — install Claude Code CLI.")
+    if p.type == "anthropic":
+        if not p.api_key:
+            return False, tr("API key is not set.")
+        return True, tr("API key is set.")
+    if p.type == "openai":
+        if not p.base_url:
+            return False, tr("Base URL is not set.")
+        if not p.model:
+            return False, tr("Model is not set.")
+        if p.needs_api_key() and not p.api_key:
+            return False, tr("API key is not set.")
+        return True, tr("Base URL, model and key are set.")
+    return False, tr("Unknown provider type.")
+
+
 # Live workers. A QThread must not be destroyed while its thread is running
 # (Qt aborts -> core dump), so workers have NO Qt parent: a window may close
 # and be deleted at any moment while the worker lives out its life here and

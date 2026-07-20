@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -109,14 +110,21 @@ def window_stylesheet(colors: dict[str, str]) -> str:
         QWidget {{ color: {colors['fg']}; }}
         QLabel {{ color: {colors['muted']}; background: transparent; }}
         QTabWidget::pane {{ border: 1px solid {colors['border']}; top: -1px; }}
+        QTabBar {{ qproperty-drawBase: 0; }}
         QTabBar::tab {{
             background: {colors['bg']}; color: {colors['muted']};
-            padding: 6px 14px; border: 1px solid transparent;
+            padding: 6px 16px; margin-right: 3px;
+            border: 1px solid {colors['border']};
+            border-top-left-radius: 4px; border-top-right-radius: 4px;
+        }}
+        QTabBar::tab:!selected {{
+            margin-top: 3px; border-color: transparent;
         }}
         QTabBar::tab:selected {{
-            color: {colors['fg']}; border: 1px solid {colors['border']};
-            border-bottom-color: {colors['bg']};
+            color: {colors['fg']}; background: {colors['field_bg']};
+            border-bottom-color: {colors['field_bg']};
         }}
+        QTabBar::tab:hover {{ color: {colors['fg']}; }}
         QToolBar, QStatusBar {{
             background: {colors['bg']}; border: none; color: {colors['fg']};
         }}
@@ -163,6 +171,25 @@ _RAVEN_FILL = 'fill="#000000"'
 
 def _tinted_raven_svg(color: QColor) -> bytes:
     return _RAVEN_SVG.replace(_RAVEN_FILL, f'fill="{color.name()}"', 1).encode("utf-8")
+
+
+# Static black icon file for the applications-menu launcher and the
+# autostart entry (as opposed to make_tray_icon's runtime-recoloured
+# pixmaps) — pip/pipx installs it nowhere, so kortalk writes it itself.
+ICON_FILE = (Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+             / "icons" / "kortalk.svg")
+
+
+def install_icon_file() -> Path:
+    """Writes the icon to ICON_FILE and returns its path. Always overwrites
+    so an icon update ships to existing installs — safe to call on every
+    startup/save, pip/pipx never places this file on its own."""
+    try:
+        ICON_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ICON_FILE.write_text(_RAVEN_SVG, encoding="utf-8")
+    except OSError:
+        pass
+    return ICON_FILE
 
 
 def make_tray_icon(color: QColor | str | None = None) -> QIcon:

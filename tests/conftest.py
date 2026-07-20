@@ -25,9 +25,14 @@ def config(config_dir):
 
 @pytest.fixture(autouse=True)
 def _isolate_autostart(tmp_path, monkeypatch):
-    """The settings dialog must not touch the real ~/.config/autostart."""
+    """Settings/app must not touch the real ~/.config/autostart,
+    ~/.local/share/applications or ~/.local/share/icons."""
+    import kortalk.app as app_mod
     import kortalk.settings_dialog as settings_dialog
+    import kortalk.theme as theme_mod
 
     monkeypatch.setattr(
         settings_dialog, "AUTOSTART_FILE", tmp_path / "autostart" / "kortalk.desktop"
     )
+    monkeypatch.setattr(app_mod, "DESKTOP_FILE", tmp_path / "applications" / "kortalk.desktop")
+    monkeypatch.setattr(theme_mod, "ICON_FILE", tmp_path / "icons" / "kortalk.svg")

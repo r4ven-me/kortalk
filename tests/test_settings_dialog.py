@@ -127,6 +127,34 @@ def test_open_window_hotkey_lives_on_the_prompts_tab(qtbot, config):
     assert config.hotkey("window") == "Ctrl+Alt+X"
 
 
+def test_provider_status_reflects_field_edits(qtbot, config):
+    dlg = SettingsDialog(config)
+    qtbot.addWidget(dlg)
+
+    dlg.provider_list.setCurrentRow(_provider_row(dlg, "anthropic"))
+    dlg.p_api_key.setText("")
+    assert dlg.p_status.text().startswith("❌")
+
+    dlg.p_api_key.setText("sk-test-789")
+    assert dlg.p_status.text().startswith("✅")
+
+
+def test_api_key_show_button_hidden_for_claude_cli(qtbot, config):
+    # regression: the eye/show-password button used to stay visible (with
+    # no field or label next to it) when claude-cli was selected, since only
+    # p_api_key and its label were toggled, not the button beside them.
+    dlg = SettingsDialog(config)
+    qtbot.addWidget(dlg)
+
+    dlg.provider_list.setCurrentRow(_provider_row(dlg, "claude-cli"))
+    assert dlg.p_api_key_show.isHidden()
+    assert dlg.p_api_key.isHidden()
+
+    dlg.provider_list.setCurrentRow(_provider_row(dlg, "anthropic"))
+    assert not dlg.p_api_key_show.isHidden()
+    assert not dlg.p_api_key.isHidden()
+
+
 def test_autostart_desktop_file_is_rendered(qtbot, config, tmp_path):
     import kortalk.settings_dialog as sd
 
@@ -138,7 +166,10 @@ def test_autostart_desktop_file_is_rendered(qtbot, config, tmp_path):
     text = sd.AUTOSTART_FILE.read_text(encoding="utf-8")
     # the template was rendered, not written verbatim
     assert "{exec_path}" not in text
+    assert "{icon_path}" not in text
     assert any(line.startswith("Exec=") and len(line) > len("Exec=")
+               for line in text.splitlines())
+    assert any(line.startswith("Icon=") and len(line) > len("Icon=")
                for line in text.splitlines())
 
 

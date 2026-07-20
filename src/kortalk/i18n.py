@@ -97,6 +97,18 @@ RU: dict[str, str] = {
     "New provider {n}": "Новый провайдер {n}",
     "Cannot delete the last provider.": "Нельзя удалить последний провайдер.",
     "Failed to configure autostart: {error}": "Не удалось настроить автозапуск: {error}",
+    "Show/hide the API key": "Показать/скрыть API-ключ",
+    "Status:": "Статус:",
+    # -- provider availability status (Settings → Prompts... → Providers) -----
+    "claude found in PATH.": "claude найден в PATH.",
+    "claude not found in PATH — install Claude Code CLI.":
+        "claude не найден в PATH — установите Claude Code CLI.",
+    "API key is not set.": "Не задан API-ключ.",
+    "API key is set.": "API-ключ задан.",
+    "Base URL is not set.": "Не задан Base URL.",
+    "Model is not set.": "Не задана модель.",
+    "Base URL, model and key are set.": "Base URL, модель и ключ заданы.",
+    "Unknown provider type.": "Неизвестный тип провайдера.",
     # -- provider errors ------------------------------------------------------
     "Unknown provider type: {type}": "Неизвестный тип провайдера: {type}",
     "Unexpected error: {error}": "Непредвиденная ошибка: {error}",
