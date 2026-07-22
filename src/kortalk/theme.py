@@ -104,47 +104,100 @@ def card_colors(app) -> dict[str, str]:
 def window_stylesheet(colors: dict[str, str]) -> str:
     """Chrome shared by the settings dialog and the main window: same flat
     background and field colours as the popup card, applied regardless of
-    the selected Qt style so the three windows always match."""
+    the selected Qt style so the three windows always match.
+
+    Every interactive control gets an explicit hover/pressed/checked/
+    disabled state — Fusion's defaults are too subtle to read as "this
+    reacted to you", which is the point of styling them here at all."""
+    c = colors
     return f"""
-        QDialog, QMainWindow {{ background-color: {colors['bg']}; }}
-        QWidget {{ color: {colors['fg']}; }}
-        QLabel {{ color: {colors['muted']}; background: transparent; }}
-        QTabWidget::pane {{ border: 1px solid {colors['border']}; top: -1px; }}
+        QDialog, QMainWindow {{ background-color: {c['bg']}; }}
+        QWidget {{ color: {c['fg']}; }}
+        QLabel {{ color: {c['muted']}; background: transparent; }}
+        QTabWidget::pane {{ border: 1px solid {c['border']}; top: -1px; }}
         QTabBar {{ qproperty-drawBase: 0; }}
         QTabBar::tab {{
-            background: {colors['bg']}; color: {colors['muted']};
+            background: {c['bg']}; color: {c['muted']};
             padding: 6px 16px; margin-right: 3px;
-            border: 1px solid {colors['border']};
-            border-top-left-radius: 4px; border-top-right-radius: 4px;
+            border: 1px solid {c['border']};
+            border-top-left-radius: 6px; border-top-right-radius: 6px;
         }}
         QTabBar::tab:!selected {{
             margin-top: 3px; border-color: transparent;
         }}
         QTabBar::tab:selected {{
-            color: {colors['fg']}; background: {colors['field_bg']};
-            border-bottom-color: {colors['field_bg']};
+            color: {c['fg']}; background: {c['field_bg']};
+            border-bottom-color: {c['field_bg']};
         }}
-        QTabBar::tab:hover {{ color: {colors['fg']}; }}
+        QTabBar::tab:hover {{ color: {c['fg']}; }}
+
         QToolBar, QStatusBar {{
-            background: {colors['bg']}; border: none; color: {colors['fg']};
+            background: {c['bg']}; border: none; color: {c['fg']}; spacing: 6px;
         }}
+        QToolBar {{ padding: 4px 6px; }}
+
         QLineEdit, QPlainTextEdit, QTextBrowser, QComboBox, QSpinBox,
         QListWidget, QFontComboBox {{
-            background-color: {colors['field_bg']};
-            color: {colors['fg']};
-            border: 1px solid {colors['border']};
-            border-radius: 4px;
+            background-color: {c['field_bg']};
+            color: {c['fg']};
+            border: 1px solid {c['border']};
+            border-radius: 6px;
+            selection-background-color: {c['highlight']};
+            selection-color: {c['highlight_text']};
         }}
-        QListWidget::item {{ padding: 3px 4px; }}
+        QLineEdit:hover, QPlainTextEdit:hover, QComboBox:hover, QSpinBox:hover {{
+            border-color: {c['muted']};
+        }}
+        QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus {{
+            border: 1px solid {c['highlight']};
+        }}
+        QComboBox::drop-down {{ border: none; width: 22px; }}
+        QComboBox QAbstractItemView {{
+            background-color: {c['field_bg']}; color: {c['fg']};
+            border: 1px solid {c['border']};
+            selection-background-color: {c['highlight']};
+            selection-color: {c['highlight_text']};
+            outline: none;
+        }}
+
+        QListWidget::item {{ padding: 4px 6px; border-radius: 4px; }}
+        QListWidget::item:hover {{ background-color: {c['code_bg']}; }}
         QListWidget::item:selected {{
-            background-color: {colors['highlight']}; color: {colors['highlight_text']};
+            background-color: {c['highlight']}; color: {c['highlight_text']};
         }}
-        QPushButton {{
-            background-color: {colors['field_bg']}; color: {colors['fg']};
-            border: 1px solid {colors['border']}; border-radius: 4px; padding: 4px 12px;
+
+        QPushButton, QToolButton {{
+            background-color: {c['field_bg']}; color: {c['fg']};
+            border: 1px solid {c['border']}; border-radius: 6px; padding: 5px 14px;
         }}
-        QPushButton:hover {{ background-color: {colors['code_bg']}; }}
-        QSplitter::handle {{ background-color: {colors['border']}; }}
+        QPushButton:hover, QToolButton:hover {{
+            background-color: {c['code_bg']}; border-color: {c['highlight']};
+        }}
+        QPushButton:pressed, QToolButton:pressed {{
+            background-color: {c['highlight']}; color: {c['highlight_text']};
+            border-color: {c['highlight']};
+        }}
+        QPushButton:disabled, QToolButton:disabled {{
+            color: {c['muted']}; border-color: {c['border']}; background-color: {c['bg']};
+        }}
+        QPushButton:checkable:checked, QToolButton:checkable:checked {{
+            background-color: {c['highlight']}; color: {c['highlight_text']};
+            border-color: {c['highlight']};
+        }}
+        QToolBar QToolButton {{ padding: 5px 12px; margin: 0 2px; }}
+
+        QPushButton#primaryButton {{
+            background-color: {c['highlight']}; color: {c['highlight_text']};
+            border-color: {c['highlight']}; font-weight: 600;
+        }}
+        QPushButton#primaryButton:hover {{ border-color: {c['fg']}; }}
+        QPushButton#primaryButton:pressed {{ background-color: {c['muted']}; }}
+        QPushButton#primaryButton:disabled {{
+            background-color: {c['field_bg']}; color: {c['muted']}; border-color: {c['border']};
+        }}
+
+        QSplitter::handle {{ background-color: {c['border']}; }}
+        QSplitter::handle:hover {{ background-color: {c['highlight']}; }}
     """
 
 

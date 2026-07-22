@@ -48,6 +48,20 @@ RU: dict[str, str] = {
     "Done": "Готово",
     "Requesting {name}…": "Запрос к {name}…",
     "Provider not found — check settings": "Провайдер не найден — проверьте настройки",
+    # -- dialog mode ------------------------------------------------------------
+    "Dialog": "Диалог",
+    "Dialog mode: keeps the conversation and its context across "
+    "messages. The quick panel stays untouched for fast one-off asks.":
+        "Режим диалога: сохраняет переписку и её контекст между сообщениями. "
+        "Обычная панель при этом не меняется и остаётся для быстрых разовых запросов.",
+    "Dialog — context is kept between messages": "Диалог — контекст сохраняется между сообщениями",
+    "New dialog": "Новый диалог",
+    "Message… (Ctrl+Enter to send)": "Сообщение… (Ctrl+Enter — отправить)",
+    "You": "Вы",
+    "Assistant": "Ассистент",
+    "Dialog mode — context is kept between messages.":
+        "Режим диалога — контекст сохраняется между сообщениями.",
+    "New dialog started": "Начат новый диалог",
     # -- settings: general ----------------------------------------------------
     "Settings — kortalk": "Настройки — kortalk",
     "General": "Общие",

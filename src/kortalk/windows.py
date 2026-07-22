@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shiboken6
-from PySide6.QtCore import QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCursor, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
@@ -15,8 +15,10 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
+    QStackedWidget,
     QTextBrowser,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -37,21 +39,27 @@ def _stop_worker(worker: AIWorker | None) -> None:
 
 
 class _StreamingBrowser(QTextBrowser):
-    """QTextBrowser that accumulates streamed text and renders Markdown."""
+    """QTextBrowser that accumulates streamed text and renders Markdown.
+
+    An optional `prefix` (set via begin_stream/reset) is rendered ahead of
+    the streamed text — dialog mode uses it to keep earlier turns of the
+    conversation visible while the newest answer streams in below them."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setOpenExternalLinks(True)
         self._buffer = ""
+        self._prefix = ""
         self._dirty = False
         self._timer = QTimer(self)
         self._timer.setInterval(_RENDER_INTERVAL_MS)
         self._timer.timeout.connect(self._render_if_dirty)
 
-    def begin_stream(self, placeholder: str) -> None:
+    def begin_stream(self, placeholder: str, prefix: str = "") -> None:
+        self._prefix = prefix
         self._buffer = ""
         self._dirty = False
-        self.setMarkdown(placeholder)
+        self.setMarkdown(prefix + placeholder)
         self._timer.start()
 
     def append_chunk(self, delta: str) -> None:
@@ -61,11 +69,20 @@ class _StreamingBrowser(QTextBrowser):
     def finish(self, full_text: str) -> None:
         self._timer.stop()
         self._buffer = full_text
-        self.setMarkdown(full_text or tr("*(empty response)*"))
+        self.setMarkdown(self._prefix + (full_text or tr("*(empty response)*")))
 
     def fail(self, message: str) -> None:
         self._timer.stop()
-        self.setMarkdown(f"**{tr('Error')}**\n\n{message}")
+        self.setMarkdown(f"{self._prefix}**{tr('Error')}**\n\n{message}")
+
+    def reset(self, placeholder: str = "") -> None:
+        """Clears any streamed content and prefix — used to start a fresh
+        dialog without the leftover transcript of the previous one."""
+        self._timer.stop()
+        self._prefix = ""
+        self._buffer = ""
+        self._dirty = False
+        self.setMarkdown(placeholder)
 
     def text_content(self) -> str:
         return self._buffer
@@ -75,7 +92,7 @@ class _StreamingBrowser(QTextBrowser):
             self._dirty = False
             scrollbar = self.verticalScrollBar()
             stick_to_bottom = scrollbar.value() >= scrollbar.maximum() - 4
-            self.setMarkdown(self._buffer + " ▌")
+            self.setMarkdown(self._prefix + self._buffer + " ▌")
             if stick_to_bottom:
                 scrollbar.setValue(scrollbar.maximum())
 
@@ -154,10 +171,16 @@ class PopupWindow(QWidget):
                 selection-color: {theme.NORD['n6']};
             }}
             QPushButton {{
-                background: transparent; border: none; color: {muted};
-                padding: 2px 6px; border-radius: 4px;
+                background: transparent; border: 1px solid transparent; color: {muted};
+                padding: 3px 8px; border-radius: 6px;
             }}
-            QPushButton:hover {{ background-color: {code_bg}; color: {fg}; }}
+            QPushButton:hover {{
+                background-color: {code_bg}; color: {fg}; border-color: {border};
+            }}
+            QPushButton:pressed {{
+                background-color: {theme.NORD['n10']}; color: {theme.NORD['n6']};
+                border-color: {theme.NORD['n10']};
+            }}
         """)
         outer.addWidget(self.card)
 
@@ -175,7 +198,7 @@ class PopupWindow(QWidget):
         window_btn.clicked.connect(self._open_in_window)
         header.addWidget(window_btn)
         close_btn = QPushButton("✕")
-        close_btn.clicked.connect(self.close)
+        close_btn.clicked.connect(self._animated_close)
         header.addWidget(close_btn)
         layout.addLayout(header)
 
@@ -188,7 +211,8 @@ class PopupWindow(QWidget):
         self.browser.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.browser)
 
-        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self.close)
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self._animated_close)
+        self._fade_anim: QPropertyAnimation | None = None
 
         self.browser.document().documentLayout().documentSizeChanged.connect(
             lambda _size: self._adjust_height()
@@ -199,8 +223,8 @@ class PopupWindow(QWidget):
     def ask(self, provider, prompt: str) -> None:
         self._prompt = prompt  # kept for "Open in window", so context isn't lost
         self.browser.begin_stream(tr("*Thinking…*"))
-        self.worker = AIWorker(provider, prompt, int(self.config.get("timeout")),
-                               int(self.config.get("max_tokens")))
+        self.worker = AIWorker(provider, [{"role": "user", "content": prompt}],
+                               int(self.config.get("timeout")), int(self.config.get("max_tokens")))
         self.worker.chunk.connect(self.browser.append_chunk)
         self.worker.finished_ok.connect(self._on_finished)
         self.worker.failed.connect(self._on_failed)
@@ -214,7 +238,9 @@ class PopupWindow(QWidget):
         x = min(pos.x() + 10, geo.right() - self.width() - 8)
         y = min(pos.y() + 12, geo.bottom() - self.height() - 8)
         self.move(max(geo.left() + 8, x), max(geo.top() + 8, y))
+        self.setWindowOpacity(0.0)
         self.show()
+        self._fade(0.0, 1.0, 130, QEasingCurve.Type.OutCubic)
 
     # -- internals ------------------------------------------------------------
 
@@ -239,14 +265,44 @@ class PopupWindow(QWidget):
         self.close()
         self.open_in_window.emit(prompt, answer)
 
+    def _fade(self, start: float, end: float, duration_ms: int,
+              easing: QEasingCurve.Type) -> QPropertyAnimation:
+        anim = QPropertyAnimation(self, b"windowOpacity", self)
+        anim.setDuration(duration_ms)
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.setEasingCurve(easing)
+        anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+        self._fade_anim = anim  # keep a live reference until it finishes
+        return anim
+
+    def _animated_close(self) -> None:
+        # Escape / the ✕ button get a quick fade instead of an abrupt
+        # disappearance; an outside click still closes instantly (native
+        # Qt.Popup behaviour) since intercepting that path isn't worth
+        # the complexity for a one-off popup.
+        anim = self._fade(self.windowOpacity(), 0.0, 110, QEasingCurve.Type.InCubic)
+        anim.finished.connect(self.close)
+
     def closeEvent(self, event) -> None:
         _stop_worker(self.worker)
         super().closeEvent(event)
 
 
 class MainWindow(QMainWindow):
-    """Two-column window: prompt+text on the left, response on the right;
-    provider selector in the toolbar."""
+    """Full window with two modes, switched by a dedicated toolbar button:
+
+    - quick mode (default): prompt+text on the left, response on the right —
+      every send is independent, matching the popup's fast, stateless feel.
+    - dialog mode: a single conversation thread that keeps full context
+      (every earlier turn is resent to the provider), for when a quick
+      one-off isn't enough and the user wants to go back and forth.
+
+    The two are kept on separate stack pages rather than blended into one
+    view: dialog mode is opt-in and never changes what the quick panel does,
+    so reaching for fast, no-context answers stays exactly as immediate as
+    before.
+    """
 
     settings_requested = Signal()
 
@@ -254,6 +310,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config = config
         self.worker: AIWorker | None = None
+        self.chat_history: list[dict] = []
+        self._fade_anim: QPropertyAnimation | None = None
 
         self.setWindowTitle("kortalk")
         self.resize(960, 560)
@@ -274,12 +332,37 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
 
+        self.chat_toggle = QToolButton()
+        self.chat_toggle.setCheckable(True)
+        self.chat_toggle.setText("💬 " + tr("Dialog"))
+        self.chat_toggle.setToolTip(tr(
+            "Dialog mode: keeps the conversation and its context across "
+            "messages. The quick panel stays untouched for fast one-off asks."
+        ))
+        self.chat_toggle.toggled.connect(self._toggle_chat_mode)
+        toolbar.addWidget(self.chat_toggle)
+
         settings_action = QAction(tr("Settings"), self)
         settings_action.triggered.connect(self.settings_requested.emit)
         toolbar.addAction(settings_action)
 
+        self.stack = QStackedWidget()
+        self.setCentralWidget(self.stack)
+
+        self.quick_page = self._build_quick_page()
+        self.chat_page = self._build_chat_page()
+        self.stack.addWidget(self.quick_page)
+        self.stack.addWidget(self.chat_page)
+
+        QShortcut(QKeySequence("Ctrl+Return"), self, self._send_active)
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self.close)
+
+        self.statusBar().showMessage(tr("Ready"))
+
+    # -- page construction ------------------------------------------------------
+
+    def _build_quick_page(self) -> QWidget:
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.setCentralWidget(splitter)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -288,6 +371,7 @@ class MainWindow(QMainWindow):
         self.input_edit = QPlainTextEdit()
         left_layout.addWidget(self.input_edit)
         self.send_btn = QPushButton(tr("Send (Ctrl+Enter)"))
+        self.send_btn.setObjectName("primaryButton")
         self.send_btn.clicked.connect(self.send)
         left_layout.addWidget(self.send_btn)
 
@@ -301,11 +385,142 @@ class MainWindow(QMainWindow):
         splitter.addWidget(left)
         splitter.addWidget(right)
         splitter.setSizes([480, 480])
+        return splitter
 
-        QShortcut(QKeySequence("Ctrl+Return"), self, self.send)
-        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self.close)
+    def _build_chat_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
-        self.statusBar().showMessage(tr("Ready"))
+        header = QHBoxLayout()
+        header.addWidget(QLabel(tr("Dialog — context is kept between messages")))
+        header.addStretch()
+        self.new_dialog_btn = QPushButton(tr("New dialog"))
+        self.new_dialog_btn.clicked.connect(self._new_dialog)
+        header.addWidget(self.new_dialog_btn)
+        layout.addLayout(header)
+
+        self.chat_browser = _StreamingBrowser()
+        self._refresh_chat_view()
+        layout.addWidget(self.chat_browser, 1)
+
+        input_row = QHBoxLayout()
+        self.chat_input = QPlainTextEdit()
+        self.chat_input.setPlaceholderText(tr("Message… (Ctrl+Enter to send)"))
+        self.chat_input.setFixedHeight(72)
+        input_row.addWidget(self.chat_input, 1)
+        self.chat_send_btn = QPushButton(tr("Send (Ctrl+Enter)"))
+        self.chat_send_btn.setObjectName("primaryButton")
+        self.chat_send_btn.clicked.connect(self.send_chat)
+        input_row.addWidget(self.chat_send_btn)
+        layout.addLayout(input_row)
+
+        return page
+
+    # -- dialog mode --------------------------------------------------------------
+
+    def _toggle_chat_mode(self, checked: bool) -> None:
+        if checked:
+            self._seed_chat_from_quick()
+            self.stack.setCurrentWidget(self.chat_page)
+            self.chat_input.setFocus()
+        else:
+            self.stack.setCurrentWidget(self.quick_page)
+
+    def _seed_chat_from_quick(self) -> None:
+        # First switch only: carry the quick panel's last Q&A into the
+        # dialog so context isn't lost when moving between the two modes.
+        # Once the dialog has turns of its own, it's left alone.
+        if not self.chat_history:
+            prompt = self.input_edit.toPlainText().strip()
+            answer = self.output.text_content().strip()
+            if prompt and answer:
+                self.chat_history = [
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": answer},
+                ]
+        self._refresh_chat_view()
+
+    def _chat_transcript(self, pending_answer: bool) -> str:
+        turns = [
+            f"**{tr('You') if m['role'] == 'user' else tr('Assistant')}:**\n\n{m['content']}"
+            for m in self.chat_history
+        ]
+        md = "\n\n---\n\n".join(turns)
+        if pending_answer:
+            md += "\n\n---\n\n" + f"**{tr('Assistant')}:**\n\n"
+        return md
+
+    def _refresh_chat_view(self) -> None:
+        if not self.chat_history:
+            self.chat_browser.reset(
+                f"*{tr('Dialog mode — context is kept between messages.')}*")
+        else:
+            self.chat_browser.reset(self._chat_transcript(pending_answer=False))
+
+    def _new_dialog(self) -> None:
+        _stop_worker(self.worker)
+        self.chat_history = []
+        self.chat_input.clear()
+        self.chat_send_btn.setEnabled(True)
+        self._refresh_chat_view()
+        self.statusBar().showMessage(tr("New dialog started"))
+
+    def send_chat(self) -> None:
+        text = self.chat_input.toPlainText().strip()
+        if not text:
+            return
+        _stop_worker(self.worker)
+
+        provider = self.config.provider(self.provider_combo.currentData())
+        if provider is None:
+            self.statusBar().showMessage(tr("Provider not found — check settings"))
+            return
+
+        self.chat_history.append({"role": "user", "content": text})
+        self.chat_input.clear()
+        self.chat_send_btn.setEnabled(False)
+        self.statusBar().showMessage(tr("Requesting {name}…").format(name=provider.name))
+        self.chat_browser.begin_stream(
+            tr("*Thinking…*"), prefix=self._chat_transcript(pending_answer=True))
+
+        self.worker = AIWorker(provider, list(self.chat_history), int(self.config.get("timeout")),
+                               int(self.config.get("max_tokens")))
+        self.worker.chunk.connect(self.chat_browser.append_chunk)
+        self.worker.finished_ok.connect(self._on_chat_finished)
+        self.worker.failed.connect(self._on_chat_failed)
+        self.worker.start()
+
+    def _on_chat_finished(self, text: str) -> None:
+        self.chat_history.append({"role": "assistant", "content": text})
+        self.chat_browser.finish(text)
+        self.chat_send_btn.setEnabled(True)
+        self.statusBar().showMessage(tr("Done"))
+
+    def _on_chat_failed(self, message: str) -> None:
+        self.chat_browser.fail(message)
+        self.chat_send_btn.setEnabled(True)
+        self.statusBar().showMessage(tr("Error"))
+
+    def _send_active(self) -> None:
+        if self.stack.currentWidget() is self.chat_page:
+            self.send_chat()
+        else:
+            self.send()
+
+    # -- shared -------------------------------------------------------------------
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.setWindowOpacity(0.0)
+        anim = QPropertyAnimation(self, b"windowOpacity", self)
+        anim.setDuration(160)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+        self._fade_anim = anim
 
     def refresh_theme(self) -> None:
         self.setWindowIcon(theme.make_tray_icon())
@@ -342,8 +557,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(tr("Requesting {name}…").format(name=provider.name))
         self.output.begin_stream(tr("*Thinking…*"))
 
-        self.worker = AIWorker(provider, text, int(self.config.get("timeout")),
-                               int(self.config.get("max_tokens")))
+        self.worker = AIWorker(provider, [{"role": "user", "content": text}],
+                               int(self.config.get("timeout")), int(self.config.get("max_tokens")))
         self.worker.chunk.connect(self.output.append_chunk)
         self.worker.finished_ok.connect(self._on_finished)
         self.worker.failed.connect(self._on_failed)

@@ -1,7 +1,11 @@
 """AI providers: Claude Code CLI, Anthropic API, OpenAI-compatible APIs.
 
 Every request runs in an AIWorker (QThread) and streams text via signals:
-chunk (delta), finished_ok (full text), failed (error message).
+chunk (delta), finished_ok (full text), failed (error message). AIWorker
+takes a full message list (`[{"role": "user"/"assistant", "content": ...}]`)
+rather than a single prompt, so both one-off asks (a single user message)
+and multi-turn dialog mode (the accumulated history) go through the same
+path.
 """
 
 from __future__ import annotations
@@ -51,6 +55,19 @@ def check_provider(p: Provider) -> tuple[bool, str]:
 _ACTIVE_WORKERS: set[AIWorker] = set()
 
 
+_CLI_SPEAKER = {"user": "Human", "assistant": "Assistant"}
+
+
+def _flatten_messages(messages: list[dict]) -> str:
+    """The CLI is invoked fresh for every request and has no memory of its
+    own, so dialog-mode history is folded into one transcript here — the
+    only way that provider gets multi-turn context at all."""
+    if len(messages) == 1:
+        return messages[0]["content"]
+    turns = (f"{_CLI_SPEAKER.get(m['role'], m['role'])}: {m['content']}" for m in messages)
+    return "\n\n".join(turns) + "\n\nAssistant:"
+
+
 def shutdown_workers(wait_ms: int = 500) -> None:
     """Stops all live workers before the application exits.
 
@@ -70,11 +87,11 @@ class AIWorker(QThread):
     finished_ok = Signal(str)    # full final text
     failed = Signal(str)         # human-readable error
 
-    def __init__(self, provider: Provider, prompt: str, timeout: int,
+    def __init__(self, provider: Provider, messages: list[dict], timeout: int,
                  max_tokens: int = 64000):
         super().__init__()  # no Qt parent, see _ACTIVE_WORKERS
         self.provider = provider
-        self.prompt = prompt
+        self.messages = messages
         self.timeout = timeout
         self.max_tokens = max_tokens
         self._cancelled = False
@@ -106,9 +123,9 @@ class AIWorker(QThread):
                 pass
 
     def run(self) -> None:
-        log.info("request: provider=%s (%s), model=%s, %d chars of prompt",
-                 self.provider.id, self.provider.type,
-                 self.provider.model or "<default>", len(self.prompt))
+        log.info("request: provider=%s (%s), model=%s, %d message(s), %d chars in the last one",
+                 self.provider.id, self.provider.type, self.provider.model or "<default>",
+                 len(self.messages), len(self.messages[-1]["content"]))
         try:
             if self.provider.type == "claude-cli":
                 self._run_claude_cli()
@@ -135,7 +152,7 @@ class AIWorker(QThread):
             ))
             return
 
-        cmd = [claude_bin, "-p", self.prompt]
+        cmd = [claude_bin, "-p", _flatten_messages(self.messages)]
         if self.provider.model:
             cmd += ["--model", self.provider.model]
         cmd += self.provider.extra_args
@@ -179,7 +196,7 @@ class AIWorker(QThread):
             with client.messages.stream(
                 model=model,
                 max_tokens=self.max_tokens,
-                messages=[{"role": "user", "content": self.prompt}],
+                messages=self.messages,
             ) as stream:
                 self._stream = stream
                 for text in stream.text_stream:
@@ -231,7 +248,7 @@ class AIWorker(QThread):
         body = {
             "model": self.provider.model,
             "stream": True,
-            "messages": [{"role": "user", "content": self.prompt}],
+            "messages": self.messages,
         }
         headers = {"Content-Type": "application/json"}
         if self.provider.api_key:
