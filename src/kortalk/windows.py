@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import shiboken6
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, Signal
+from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QCursor,
     QGuiApplication,
     QKeySequence,
+    QPalette,
     QShortcut,
+    QTextCharFormat,
     QTextCursor,
 )
 from PySide6.QtWidgets import (
@@ -30,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import theme
+from . import session, theme
 from .config import Config
 from .i18n import tr
 from .providers import AIWorker
@@ -63,6 +65,11 @@ def _style_as_stop(button: QPushButton, active: bool) -> None:
         button.setStyleSheet("")
 
 
+_THINKING_TICK_MS = 400   # animated ellipsis while waiting for the first chunk
+_CURSOR_BLINK_MS = 500    # blinking caret while chunks are arriving
+_CURSOR_GLYPH = "▍"
+
+
 class _StreamingBrowser(QTextBrowser):
     """QTextBrowser that streams AI output.
 
@@ -74,6 +81,12 @@ class _StreamingBrowser(QTextBrowser):
     jump even while parked at the bottom. Markdown formatting (bold, code
     blocks, links) is applied once, when the response is complete.
 
+    Two small animations mark the two waiting states: an animated "Thinking…"
+    ellipsis before the first chunk arrives, and a blinking caret at the
+    write position once text is streaming in — both edit only the last few
+    characters of the document, so they're as selection-safe as the chunks
+    themselves.
+
     An optional `prefix` (set via begin_stream/reset) is rendered ahead of
     the streamed text — dialog mode uses it to keep earlier turns of the
     conversation visible while the newest answer streams in below them."""
@@ -83,29 +96,57 @@ class _StreamingBrowser(QTextBrowser):
         self.setOpenExternalLinks(True)
         self._buffer = ""
         self._prefix = ""
+        self._thinking_base = ""
+        self._thinking_shown_len = 0
+        self._thinking_frame = 0
+        self._cursor_shown = False
+
+        self._thinking_timer = QTimer(self)
+        self._thinking_timer.setInterval(_THINKING_TICK_MS)
+        self._thinking_timer.timeout.connect(self._tick_thinking)
+
+        self._blink_timer = QTimer(self)
+        self._blink_timer.setInterval(_CURSOR_BLINK_MS)
+        self._blink_timer.timeout.connect(self._tick_blink)
 
     def begin_stream(self, placeholder: str, prefix: str = "") -> None:
         self._prefix = prefix
         self._buffer = ""
+        self._cursor_shown = False
         self.setMarkdown(prefix)
-        self._append_plain(placeholder)
+        self._thinking_base = placeholder
+        self._thinking_shown_len = 0
+        self._thinking_frame = 0
+        self._tick_thinking()
+        self._thinking_timer.start()
 
     def append_chunk(self, delta: str) -> None:
+        if not delta:
+            return
         if not self._buffer:
-            self.setMarkdown(self._prefix)  # drop the "Thinking…" placeholder
+            # first chunk: the animated "Thinking…" placeholder is done
+            self._thinking_timer.stop()
+            self._replace_tail(self._thinking_shown_len, "")
+            self._thinking_shown_len = 0
+            self._blink_timer.start()
+        self._set_cursor_visible(False)  # the caret glyph must not become part of the text
         self._buffer += delta
         self._append_plain(delta)
+        self._set_cursor_visible(True)
 
     def finish(self, full_text: str) -> None:
+        self._stop_animations()
         self._buffer = full_text
         self._render_final(full_text or tr("*(empty response)*"))
 
     def fail(self, message: str) -> None:
+        self._stop_animations()
         self._render_final(f"**{tr('Error')}**\n\n{message}")
 
     def reset(self, placeholder: str = "") -> None:
         """Clears any streamed content and prefix — used to start a fresh
         dialog without the leftover transcript of the previous one."""
+        self._stop_animations()
         self._prefix = ""
         self._buffer = ""
         self.setMarkdown(placeholder)
@@ -115,25 +156,74 @@ class _StreamingBrowser(QTextBrowser):
 
     # -- internals ------------------------------------------------------------
 
+    def _stop_animations(self) -> None:
+        self._thinking_timer.stop()
+        self._blink_timer.stop()
+        self._cursor_shown = False
+
+    def _tick_thinking(self) -> None:
+        dots = "." * (self._thinking_frame % 4)
+        self._thinking_frame += 1
+        text = self._thinking_base + dots
+        self._replace_tail(self._thinking_shown_len, text, italic=True)
+        self._thinking_shown_len = len(text)
+
+    def _tick_blink(self) -> None:
+        self._set_cursor_visible(not self._cursor_shown)
+
+    def _set_cursor_visible(self, show: bool) -> None:
+        if show == self._cursor_shown:
+            return
+        self._cursor_shown = show
+        if show:
+            self._append_plain(_CURSOR_GLYPH)
+        else:
+            self._replace_tail(len(_CURSOR_GLYPH), "")
+
+    def _is_stuck_to_bottom(self) -> bool:
+        scrollbar = self.verticalScrollBar()
+        return scrollbar.value() >= scrollbar.maximum() - 2
+
+    def _scroll_to_bottom(self) -> None:
+        scrollbar = self.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
     def _append_plain(self, text: str) -> None:
         if not text:
             return
-        scrollbar = self.verticalScrollBar()
-        stick_to_bottom = scrollbar.value() >= scrollbar.maximum() - 2
+        stick_to_bottom = self._is_stuck_to_bottom()
         # A cursor created here, rather than self.textCursor(), never touches
         # whatever selection the user currently has in the widget.
         cursor = QTextCursor(self.document())
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(text)
+        # A fresh, plain QTextCharFormat keeps streamed text from picking up
+        # the italic "thinking" styling (or anything else) left at the tail.
+        cursor.insertText(text, QTextCharFormat())
         if stick_to_bottom:
-            scrollbar.setValue(scrollbar.maximum())
+            self._scroll_to_bottom()
+
+    def _replace_tail(self, old_len: int, new_text: str, italic: bool = False) -> None:
+        stick_to_bottom = self._is_stuck_to_bottom()
+        cursor = QTextCursor(self.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if old_len:
+            cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter,
+                                QTextCursor.MoveMode.KeepAnchor, old_len)
+            cursor.removeSelectedText()
+        if new_text:
+            fmt = QTextCharFormat()
+            if italic:
+                fmt.setFontItalic(True)
+                fmt.setForeground(self.palette().color(QPalette.ColorRole.PlaceholderText))
+            cursor.insertText(new_text, fmt)
+        if stick_to_bottom:
+            self._scroll_to_bottom()
 
     def _render_final(self, markdown_text: str) -> None:
-        scrollbar = self.verticalScrollBar()
-        stick_to_bottom = scrollbar.value() >= scrollbar.maximum() - 2
+        stick_to_bottom = self._is_stuck_to_bottom()
         self.setMarkdown(self._prefix + markdown_text)
         if stick_to_bottom:
-            scrollbar.setValue(scrollbar.maximum())
+            self._scroll_to_bottom()
 
 
 class _DraggableCard(QFrame):
@@ -247,10 +337,7 @@ class PopupWindow(QWidget):
 
         self.browser = _StreamingBrowser(self.card)
         self.browser.document().setDocumentMargin(0)
-        # background for Markdown code blocks
-        self.browser.document().setDefaultStyleSheet(
-            f"pre, code {{ background-color: {code_bg}; }}"
-        )
+        self.browser.document().setDefaultStyleSheet(theme.code_block_stylesheet(colors))
         self.browser.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.browser)
 
@@ -265,7 +352,7 @@ class PopupWindow(QWidget):
 
     def ask(self, provider, prompt: str) -> None:
         self._prompt = prompt  # kept for "Open in window", so context isn't lost
-        self.browser.begin_stream(tr("*Thinking…*"))
+        self.browser.begin_stream(tr("Thinking"))
         self.stop_btn.setEnabled(True)
         self.worker = AIWorker(provider, [{"role": "user", "content": prompt}],
                                int(self.config.get("timeout")), int(self.config.get("max_tokens")))
@@ -361,7 +448,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config = config
         self.worker: AIWorker | None = None
-        self.chat_history: list[dict] = []
+        self.chat_history: list[dict] = session.load_dialog()
         self._fade_anim: QPropertyAnimation | None = None
 
         self.setWindowTitle("kortalk")
@@ -405,6 +492,7 @@ class MainWindow(QMainWindow):
         self.chat_page = self._build_chat_page()
         self.stack.addWidget(self.quick_page)
         self.stack.addWidget(self.chat_page)
+        self._apply_code_style()
 
         QShortcut(QKeySequence("Ctrl+Return"), self, self._send_active)
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self.close)
@@ -510,6 +598,7 @@ class MainWindow(QMainWindow):
                     {"role": "user", "content": prompt},
                     {"role": "assistant", "content": answer},
                 ]
+                self._persist_dialog()
         self._refresh_chat_view()
 
     def _chat_transcript(self, pending_answer: bool) -> str:
@@ -529,12 +618,16 @@ class MainWindow(QMainWindow):
         else:
             self.chat_browser.reset(self._chat_transcript(pending_answer=False))
 
+    def _persist_dialog(self) -> None:
+        session.save_dialog(self.chat_history)
+
     def _new_dialog(self) -> None:
         _stop_worker(self.worker)
         self.chat_history = []
         self.chat_input.clear()
         self._set_chat_sending(False)
         self._refresh_chat_view()
+        session.clear_dialog()
         self.statusBar().showMessage(tr("New dialog started"))
 
     def send_chat(self) -> None:
@@ -549,11 +642,12 @@ class MainWindow(QMainWindow):
             return
 
         self.chat_history.append({"role": "user", "content": text})
+        self._persist_dialog()
         self.chat_input.clear()
         self._set_chat_sending(True)
         self.statusBar().showMessage(tr("Requesting {name}…").format(name=provider.name))
         self.chat_browser.begin_stream(
-            tr("*Thinking…*"), prefix=self._chat_transcript(pending_answer=True))
+            tr("Thinking"), prefix=self._chat_transcript(pending_answer=True))
 
         self.worker = AIWorker(provider, list(self.chat_history), int(self.config.get("timeout")),
                                int(self.config.get("max_tokens")))
@@ -574,6 +668,7 @@ class MainWindow(QMainWindow):
             partial = self.chat_browser.text_content().strip()
             if partial:
                 self.chat_history.append({"role": "assistant", "content": partial})
+                self._persist_dialog()
                 self.chat_browser.finish(partial)
             else:
                 self._refresh_chat_view()  # nothing streamed yet: drop the placeholder
@@ -584,6 +679,7 @@ class MainWindow(QMainWindow):
 
     def _on_chat_finished(self, text: str) -> None:
         self.chat_history.append({"role": "assistant", "content": text})
+        self._persist_dialog()
         self.chat_browser.finish(text)
         self._set_chat_sending(False)
         self.statusBar().showMessage(tr("Done"))
@@ -615,6 +711,12 @@ class MainWindow(QMainWindow):
     def refresh_theme(self) -> None:
         self.setWindowIcon(theme.make_tray_icon())
         theme.apply_window_theme(self)
+        self._apply_code_style()
+
+    def _apply_code_style(self) -> None:
+        stylesheet = theme.code_block_stylesheet(theme.card_colors(QGuiApplication.instance()))
+        self.output.document().setDefaultStyleSheet(stylesheet)
+        self.chat_browser.document().setDefaultStyleSheet(stylesheet)
 
     def reload_providers(self) -> None:
         self.provider_combo.blockSignals(True)
@@ -645,7 +747,7 @@ class MainWindow(QMainWindow):
 
         self._set_quick_sending(True)
         self.statusBar().showMessage(tr("Requesting {name}…").format(name=provider.name))
-        self.output.begin_stream(tr("*Thinking…*"))
+        self.output.begin_stream(tr("Thinking"))
 
         self.worker = AIWorker(provider, [{"role": "user", "content": text}],
                                int(self.config.get("timeout")), int(self.config.get("max_tokens")))

@@ -96,9 +96,23 @@ def card_colors(app) -> dict[str, str]:
         "border": NORD["n3"] if dark else NORD["n4"],
         "muted": NORD["n4"] if dark else NORD["n3"],
         "code_bg": NORD["n1"] if dark else NORD["n5"],
+        # Deliberately distinct from code_bg (used for button hover/chrome):
+        # a code block should read as recessed — darker than the page in
+        # dark mode, not the lighter shade that works for a hovered button.
+        "code_block_bg": QColor(NORD["n00"]).darker(130).name() if dark else NORD["n4"],
         "highlight": NORD["n10"],
         "highlight_text": NORD["n6"],
     }
+
+
+def code_block_stylesheet(colors: dict[str, str]) -> str:
+    """Markdown `<pre>`/`<code>` styling shared by every response view
+    (popup, quick mode, dialog mode): a recessed background and a monospace
+    font so code stands out from prose."""
+    return (
+        f"pre, code {{ background-color: {colors['code_block_bg']}; "
+        f"font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace; }}"
+    )
 
 
 def window_stylesheet(colors: dict[str, str]) -> str:
