@@ -333,12 +333,13 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(spacer)
 
         self.chat_toggle = QToolButton()
+        self.chat_toggle.setObjectName("chatToggle")
         self.chat_toggle.setCheckable(True)
-        self.chat_toggle.setText("💬 " + tr("Dialog"))
         self.chat_toggle.setToolTip(tr(
             "Dialog mode: keeps the conversation and its context across "
             "messages. The quick panel stays untouched for fast one-off asks."
         ))
+        self._set_chat_toggle_label(False)
         self.chat_toggle.toggled.connect(self._toggle_chat_mode)
         toolbar.addWidget(self.chat_toggle)
 
@@ -401,26 +402,44 @@ class MainWindow(QMainWindow):
         header.addWidget(self.new_dialog_btn)
         layout.addLayout(header)
 
+        # A vertical splitter (not a fixed-height input box) lets the user
+        # drag the divider up when a message needs more room to compose.
+        chat_splitter = QSplitter(Qt.Orientation.Vertical)
+
         self.chat_browser = _StreamingBrowser()
         self._refresh_chat_view()
-        layout.addWidget(self.chat_browser, 1)
+        chat_splitter.addWidget(self.chat_browser)
 
-        input_row = QHBoxLayout()
+        input_widget = QWidget()
+        input_row = QHBoxLayout(input_widget)
+        input_row.setContentsMargins(0, 0, 0, 0)
         self.chat_input = QPlainTextEdit()
         self.chat_input.setPlaceholderText(tr("Message… (Ctrl+Enter to send)"))
-        self.chat_input.setFixedHeight(72)
+        self.chat_input.setMinimumHeight(40)
         input_row.addWidget(self.chat_input, 1)
         self.chat_send_btn = QPushButton(tr("Send (Ctrl+Enter)"))
         self.chat_send_btn.setObjectName("primaryButton")
         self.chat_send_btn.clicked.connect(self.send_chat)
         input_row.addWidget(self.chat_send_btn)
-        layout.addLayout(input_row)
+        chat_splitter.addWidget(input_widget)
 
+        chat_splitter.setStretchFactor(0, 1)
+        chat_splitter.setStretchFactor(1, 0)
+        chat_splitter.setSizes([420, 90])
+
+        layout.addWidget(chat_splitter, 1)
         return page
 
     # -- dialog mode --------------------------------------------------------------
 
+    def _set_chat_toggle_label(self, in_chat_mode: bool) -> None:
+        # The colour change alone (QSS :checked state) is easy to miss in a
+        # toolbar — swapping the label makes "how do I get back" obvious.
+        text = ("◀ " + tr("Quick mode")) if in_chat_mode else ("💬 " + tr("Dialog"))
+        self.chat_toggle.setText(text)
+
     def _toggle_chat_mode(self, checked: bool) -> None:
+        self._set_chat_toggle_label(checked)
         if checked:
             self._seed_chat_from_quick()
             self.stack.setCurrentWidget(self.chat_page)

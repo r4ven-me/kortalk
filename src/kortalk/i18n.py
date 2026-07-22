@@ -50,6 +50,7 @@ RU: dict[str, str] = {
     "Provider not found — check settings": "Провайдер не найден — проверьте настройки",
     # -- dialog mode ------------------------------------------------------------
     "Dialog": "Диалог",
+    "Quick mode": "Быстрый режим",
     "Dialog mode: keeps the conversation and its context across "
     "messages. The quick panel stays untouched for fast one-off asks.":
         "Режим диалога: сохраняет переписку и её контекст между сообщениями. "

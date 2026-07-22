@@ -347,9 +347,10 @@ class SettingsDialog(QDialog):
         key_row = QHBoxLayout()
         key_row.addWidget(self.p_api_key)
         self.p_api_key_show = QPushButton("👁")
+        self.p_api_key_show.setObjectName("iconButton")
         self.p_api_key_show.setToolTip(tr("Show/hide the API key"))
         self.p_api_key_show.setCheckable(True)
-        self.p_api_key_show.setFixedWidth(34)
+        self.p_api_key_show.setFixedWidth(40)
         self.p_api_key_show.toggled.connect(
             lambda on: self.p_api_key.setEchoMode(
                 QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password

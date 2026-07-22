@@ -185,6 +185,10 @@ def window_stylesheet(colors: dict[str, str]) -> str:
             border-color: {c['highlight']};
         }}
         QToolBar QToolButton {{ padding: 5px 12px; margin: 0 2px; }}
+        QToolButton#chatToggle:checked {{
+            background-color: {c['highlight']}; color: {c['highlight_text']};
+            border-color: {c['highlight']}; font-weight: 600;
+        }}
 
         QPushButton#primaryButton {{
             background-color: {c['highlight']}; color: {c['highlight_text']};
@@ -195,6 +199,8 @@ def window_stylesheet(colors: dict[str, str]) -> str:
         QPushButton#primaryButton:disabled {{
             background-color: {c['field_bg']}; color: {c['muted']}; border-color: {c['border']};
         }}
+
+        QPushButton#iconButton {{ padding: 5px 4px; }}
 
         QSplitter::handle {{ background-color: {c['border']}; }}
         QSplitter::handle:hover {{ background-color: {c['highlight']}; }}
