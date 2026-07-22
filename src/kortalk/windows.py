@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import shiboken6
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QCursor, QGuiApplication, QKeySequence, QShortcut
+from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, Signal
+from PySide6.QtGui import (
+    QAction,
+    QCursor,
+    QGuiApplication,
+    QKeySequence,
+    QShortcut,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -28,18 +35,44 @@ from .config import Config
 from .i18n import tr
 from .providers import AIWorker
 
-_RENDER_INTERVAL_MS = 80  # Markdown re-render rate while streaming
+
+def _worker_running(worker: AIWorker | None) -> bool:
+    return worker is not None and shiboken6.isValid(worker) and worker.isRunning()
 
 
 def _stop_worker(worker: AIWorker | None) -> None:
     """Stops the worker if it is still alive: a finished worker deletes
     itself via deleteLater, and touching it raises RuntimeError."""
-    if worker is not None and shiboken6.isValid(worker) and worker.isRunning():
+    if _worker_running(worker):
         worker.stop()
 
 
+def _style_as_stop(button: QPushButton, active: bool) -> None:
+    """Recolours a primary Send button to Nord's red while it doubles as
+    Stop — relabelling it alone is too easy to miss at a glance."""
+    if active:
+        button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {theme.NORD['n11']}; color: {theme.NORD['n6']};
+                border-color: {theme.NORD['n11']};
+            }}
+            QPushButton:hover {{ border-color: {theme.NORD['n6']}; }}
+            QPushButton:pressed {{ background-color: {theme.NORD['n0']}; }}
+        """)
+    else:
+        button.setStyleSheet("")
+
+
 class _StreamingBrowser(QTextBrowser):
-    """QTextBrowser that accumulates streamed text and renders Markdown.
+    """QTextBrowser that streams AI output.
+
+    While a response streams in, text is appended as plain text through a
+    cursor placed at the end of the document, instead of the previous
+    approach of calling setMarkdown() on a timer to re-render everything —
+    that rebuilt the whole document several times a second, which fought
+    any text selection the user was making and made the scrollbar visibly
+    jump even while parked at the bottom. Markdown formatting (bold, code
+    blocks, links) is applied once, when the response is complete.
 
     An optional `prefix` (set via begin_stream/reset) is rendered ahead of
     the streamed text — dialog mode uses it to keep earlier turns of the
@@ -50,51 +83,57 @@ class _StreamingBrowser(QTextBrowser):
         self.setOpenExternalLinks(True)
         self._buffer = ""
         self._prefix = ""
-        self._dirty = False
-        self._timer = QTimer(self)
-        self._timer.setInterval(_RENDER_INTERVAL_MS)
-        self._timer.timeout.connect(self._render_if_dirty)
 
     def begin_stream(self, placeholder: str, prefix: str = "") -> None:
         self._prefix = prefix
         self._buffer = ""
-        self._dirty = False
-        self.setMarkdown(prefix + placeholder)
-        self._timer.start()
+        self.setMarkdown(prefix)
+        self._append_plain(placeholder)
 
     def append_chunk(self, delta: str) -> None:
+        if not self._buffer:
+            self.setMarkdown(self._prefix)  # drop the "Thinking…" placeholder
         self._buffer += delta
-        self._dirty = True
+        self._append_plain(delta)
 
     def finish(self, full_text: str) -> None:
-        self._timer.stop()
         self._buffer = full_text
-        self.setMarkdown(self._prefix + (full_text or tr("*(empty response)*")))
+        self._render_final(full_text or tr("*(empty response)*"))
 
     def fail(self, message: str) -> None:
-        self._timer.stop()
-        self.setMarkdown(f"{self._prefix}**{tr('Error')}**\n\n{message}")
+        self._render_final(f"**{tr('Error')}**\n\n{message}")
 
     def reset(self, placeholder: str = "") -> None:
         """Clears any streamed content and prefix — used to start a fresh
         dialog without the leftover transcript of the previous one."""
-        self._timer.stop()
         self._prefix = ""
         self._buffer = ""
-        self._dirty = False
         self.setMarkdown(placeholder)
 
     def text_content(self) -> str:
         return self._buffer
 
-    def _render_if_dirty(self) -> None:
-        if self._dirty:
-            self._dirty = False
-            scrollbar = self.verticalScrollBar()
-            stick_to_bottom = scrollbar.value() >= scrollbar.maximum() - 4
-            self.setMarkdown(self._prefix + self._buffer + " ▌")
-            if stick_to_bottom:
-                scrollbar.setValue(scrollbar.maximum())
+    # -- internals ------------------------------------------------------------
+
+    def _append_plain(self, text: str) -> None:
+        if not text:
+            return
+        scrollbar = self.verticalScrollBar()
+        stick_to_bottom = scrollbar.value() >= scrollbar.maximum() - 2
+        # A cursor created here, rather than self.textCursor(), never touches
+        # whatever selection the user currently has in the widget.
+        cursor = QTextCursor(self.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(text)
+        if stick_to_bottom:
+            scrollbar.setValue(scrollbar.maximum())
+
+    def _render_final(self, markdown_text: str) -> None:
+        scrollbar = self.verticalScrollBar()
+        stick_to_bottom = scrollbar.value() >= scrollbar.maximum() - 2
+        self.setMarkdown(self._prefix + markdown_text)
+        if stick_to_bottom:
+            scrollbar.setValue(scrollbar.maximum())
 
 
 class _DraggableCard(QFrame):
@@ -191,6 +230,10 @@ class PopupWindow(QWidget):
         header = QHBoxLayout()
         header.addWidget(QLabel(provider_name))
         header.addStretch()
+        self.stop_btn = QPushButton(tr("Stop"))
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self._stop_answer)
+        header.addWidget(self.stop_btn)
         copy_btn = QPushButton(tr("Copy"))
         copy_btn.clicked.connect(self._copy_answer)
         header.addWidget(copy_btn)
@@ -223,6 +266,7 @@ class PopupWindow(QWidget):
     def ask(self, provider, prompt: str) -> None:
         self._prompt = prompt  # kept for "Open in window", so context isn't lost
         self.browser.begin_stream(tr("*Thinking…*"))
+        self.stop_btn.setEnabled(True)
         self.worker = AIWorker(provider, [{"role": "user", "content": prompt}],
                                int(self.config.get("timeout")), int(self.config.get("max_tokens")))
         self.worker.chunk.connect(self.browser.append_chunk)
@@ -246,9 +290,16 @@ class PopupWindow(QWidget):
 
     def _on_finished(self, text: str) -> None:
         self.browser.finish(text)
+        self.stop_btn.setEnabled(False)
 
     def _on_failed(self, message: str) -> None:
         self.browser.fail(message)
+        self.stop_btn.setEnabled(False)
+
+    def _stop_answer(self) -> None:
+        _stop_worker(self.worker)
+        self.browser.finish(self.browser.text_content())
+        self.stop_btn.setEnabled(False)
 
     def _adjust_height(self) -> None:
         doc_height = self.browser.document().size().height()
@@ -373,7 +424,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.input_edit)
         self.send_btn = QPushButton(tr("Send (Ctrl+Enter)"))
         self.send_btn.setObjectName("primaryButton")
-        self.send_btn.clicked.connect(self.send)
+        self.send_btn.clicked.connect(self._send_or_stop)
         left_layout.addWidget(self.send_btn)
 
         right = QWidget()
@@ -419,7 +470,7 @@ class MainWindow(QMainWindow):
         input_row.addWidget(self.chat_input, 1)
         self.chat_send_btn = QPushButton(tr("Send (Ctrl+Enter)"))
         self.chat_send_btn.setObjectName("primaryButton")
-        self.chat_send_btn.clicked.connect(self.send_chat)
+        self.chat_send_btn.clicked.connect(self._chat_send_or_stop)
         input_row.addWidget(self.chat_send_btn)
         chat_splitter.addWidget(input_widget)
 
@@ -482,7 +533,7 @@ class MainWindow(QMainWindow):
         _stop_worker(self.worker)
         self.chat_history = []
         self.chat_input.clear()
-        self.chat_send_btn.setEnabled(True)
+        self._set_chat_sending(False)
         self._refresh_chat_view()
         self.statusBar().showMessage(tr("New dialog started"))
 
@@ -499,7 +550,7 @@ class MainWindow(QMainWindow):
 
         self.chat_history.append({"role": "user", "content": text})
         self.chat_input.clear()
-        self.chat_send_btn.setEnabled(False)
+        self._set_chat_sending(True)
         self.statusBar().showMessage(tr("Requesting {name}…").format(name=provider.name))
         self.chat_browser.begin_stream(
             tr("*Thinking…*"), prefix=self._chat_transcript(pending_answer=True))
@@ -511,15 +562,35 @@ class MainWindow(QMainWindow):
         self.worker.failed.connect(self._on_chat_failed)
         self.worker.start()
 
+    def _set_chat_sending(self, sending: bool) -> None:
+        self.chat_send_btn.setText(tr("Stop") if sending else tr("Send (Ctrl+Enter)"))
+        _style_as_stop(self.chat_send_btn, sending)
+
+    def _chat_send_or_stop(self) -> None:
+        if _worker_running(self.worker):
+            _stop_worker(self.worker)
+            # keep whatever streamed in so far as the turn's answer — dropping
+            # it silently would mean the next message loses that context too
+            partial = self.chat_browser.text_content().strip()
+            if partial:
+                self.chat_history.append({"role": "assistant", "content": partial})
+                self.chat_browser.finish(partial)
+            else:
+                self._refresh_chat_view()  # nothing streamed yet: drop the placeholder
+            self._set_chat_sending(False)
+            self.statusBar().showMessage(tr("Stopped"))
+        else:
+            self.send_chat()
+
     def _on_chat_finished(self, text: str) -> None:
         self.chat_history.append({"role": "assistant", "content": text})
         self.chat_browser.finish(text)
-        self.chat_send_btn.setEnabled(True)
+        self._set_chat_sending(False)
         self.statusBar().showMessage(tr("Done"))
 
     def _on_chat_failed(self, message: str) -> None:
         self.chat_browser.fail(message)
-        self.chat_send_btn.setEnabled(True)
+        self._set_chat_sending(False)
         self.statusBar().showMessage(tr("Error"))
 
     def _send_active(self) -> None:
@@ -572,7 +643,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("Provider not found — check settings"))
             return
 
-        self.send_btn.setEnabled(False)
+        self._set_quick_sending(True)
         self.statusBar().showMessage(tr("Requesting {name}…").format(name=provider.name))
         self.output.begin_stream(tr("*Thinking…*"))
 
@@ -583,14 +654,30 @@ class MainWindow(QMainWindow):
         self.worker.failed.connect(self._on_failed)
         self.worker.start()
 
+    def _set_quick_sending(self, sending: bool) -> None:
+        self.send_btn.setText(tr("Stop") if sending else tr("Send (Ctrl+Enter)"))
+        _style_as_stop(self.send_btn, sending)
+
+    def _send_or_stop(self) -> None:
+        # While a response is streaming the same button doubles as Stop —
+        # no separate control needed, and it's always the obvious thing to
+        # click since it's the one that just said "Send".
+        if _worker_running(self.worker):
+            _stop_worker(self.worker)
+            self.output.finish(self.output.text_content())
+            self._set_quick_sending(False)
+            self.statusBar().showMessage(tr("Stopped"))
+        else:
+            self.send()
+
     def _on_finished(self, text: str) -> None:
         self.output.finish(text)
-        self.send_btn.setEnabled(True)
+        self._set_quick_sending(False)
         self.statusBar().showMessage(tr("Done"))
 
     def _on_failed(self, message: str) -> None:
         self.output.fail(message)
-        self.send_btn.setEnabled(True)
+        self._set_quick_sending(False)
         self.statusBar().showMessage(tr("Error"))
 
     def _provider_changed(self) -> None:

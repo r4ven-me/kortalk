@@ -39,6 +39,8 @@ RU: dict[str, str] = {
     "*(empty response)*": "*(пустой ответ)*",
     "Error": "Ошибка",
     "Copy": "Копировать",
+    "Stop": "Стоп",
+    "Stopped": "Остановлено",
     "Open in window": "В окно",
     "Provider:": "Провайдер:",
     "Prompt + text:": "Промпт + текст:",
