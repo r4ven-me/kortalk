@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import shiboken6
 from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer, Signal
 from PySide6.QtGui import (
@@ -19,7 +21,10 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
@@ -448,8 +453,16 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config = config
         self.worker: AIWorker | None = None
-        self.chat_history: list[dict] = session.load_dialog()
         self._fade_anim: QPropertyAnimation | None = None
+
+        # Pick up the most recently active dialog, if any — the session
+        # list (built below) lets the user switch to a different one.
+        self.session_id: int | None = None
+        self.chat_history: list[dict] = []
+        sessions = session.list_sessions()
+        if sessions:
+            self.session_id = sessions[0].id
+            self.chat_history = session.load_session(self.session_id)
 
         self.setWindowTitle("kortalk")
         self.resize(960, 560)
@@ -529,17 +542,46 @@ class MainWindow(QMainWindow):
 
     def _build_chat_page(self) -> QWidget:
         page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        outer = QHBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
 
-        header = QHBoxLayout()
-        header.addWidget(QLabel(tr("Dialog — context is kept between messages")))
-        header.addStretch()
+        page_splitter = QSplitter(Qt.Orientation.Horizontal)
+        page_splitter.addWidget(self._build_session_panel())
+        page_splitter.addWidget(self._build_conversation_panel())
+        page_splitter.setSizes([220, 700])
+        outer.addWidget(page_splitter)
+        return page
+
+    def _build_session_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(8, 8, 4, 8)
+        layout.addWidget(QLabel(tr("Dialogs:")))
+
+        self.session_list = QListWidget()
+        self.session_list.currentItemChanged.connect(self._session_row_changed)
+        layout.addWidget(self.session_list, 1)
+
+        btn_row = QHBoxLayout()
         self.new_dialog_btn = QPushButton(tr("New dialog"))
         self.new_dialog_btn.clicked.connect(self._new_dialog)
-        header.addWidget(self.new_dialog_btn)
-        layout.addLayout(header)
+        btn_row.addWidget(self.new_dialog_btn)
+        self.delete_dialog_btn = QPushButton("🗑")
+        self.delete_dialog_btn.setObjectName("iconButton")
+        self.delete_dialog_btn.setToolTip(tr("Delete this dialog"))
+        self.delete_dialog_btn.clicked.connect(self._delete_dialog)
+        btn_row.addWidget(self.delete_dialog_btn)
+        layout.addLayout(btn_row)
+
+        self._reload_session_list()
+        return panel
+
+    def _build_conversation_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(4, 8, 8, 8)
+        layout.setSpacing(6)
+        layout.addWidget(QLabel(tr("Dialog — context is kept between messages")))
 
         # A vertical splitter (not a fixed-height input box) lets the user
         # drag the divider up when a message needs more room to compose.
@@ -567,7 +609,7 @@ class MainWindow(QMainWindow):
         chat_splitter.setSizes([420, 90])
 
         layout.addWidget(chat_splitter, 1)
-        return page
+        return panel
 
     # -- dialog mode --------------------------------------------------------------
 
@@ -618,16 +660,86 @@ class MainWindow(QMainWindow):
         else:
             self.chat_browser.reset(self._chat_transcript(pending_answer=False))
 
+    # -- session list ---------------------------------------------------------
+
+    def _session_label(self, meta: session.SessionMeta) -> str:
+        try:
+            stamp = datetime.fromisoformat(meta.updated_at).astimezone().strftime("%d.%m %H:%M")
+        except ValueError:
+            stamp = ""
+        return f"{meta.title}   —   {stamp}" if stamp else meta.title
+
+    def _reload_session_list(self) -> None:
+        self.session_list.blockSignals(True)
+        self.session_list.clear()
+        selected_row = -1
+        for i, meta in enumerate(session.list_sessions()):
+            item = QListWidgetItem(self._session_label(meta))
+            item.setData(Qt.ItemDataRole.UserRole, meta.id)
+            self.session_list.addItem(item)
+            if meta.id == self.session_id:
+                selected_row = i
+        if selected_row >= 0:
+            self.session_list.setCurrentRow(selected_row)
+        self.session_list.blockSignals(False)
+
+    def _session_row_changed(self, current: QListWidgetItem | None,
+                             _previous: QListWidgetItem | None) -> None:
+        if current is None:
+            return
+        session_id = current.data(Qt.ItemDataRole.UserRole)
+        if session_id == self.session_id:
+            return
+        _stop_worker(self.worker)
+        self.session_id = session_id
+        self.chat_history = session.load_session(session_id)
+        self.chat_input.clear()
+        self._set_chat_sending(False)
+        self._refresh_chat_view()
+
+    def _derive_session_title(self) -> str:
+        for m in self.chat_history:
+            if m["role"] == "user" and m["content"].strip():
+                text = " ".join(m["content"].split())
+                return text[:40] + ("…" if len(text) > 40 else "")
+        return tr("Dialog")
+
     def _persist_dialog(self) -> None:
-        session.save_dialog(self.chat_history)
+        if self.session_id is None:
+            self.session_id = session.create_session(
+                self._derive_session_title(), self.chat_history)
+        else:
+            session.save_session(self.session_id, self.chat_history)
+        self._reload_session_list()
+
+    def _delete_dialog(self) -> None:
+        if self.session_id is None:
+            return  # an unsaved new dialog — nothing to delete yet
+        confirmed = QMessageBox.question(
+            self, tr("Delete this dialog"),
+            tr("Delete this dialog permanently? This cannot be undone."),
+        ) == QMessageBox.StandardButton.Yes
+        if not confirmed:
+            return
+        _stop_worker(self.worker)
+        session.delete_session(self.session_id)
+        remaining = session.list_sessions()
+        self.session_id = remaining[0].id if remaining else None
+        self.chat_history = session.load_session(self.session_id) if remaining else []
+        self.chat_input.clear()
+        self._set_chat_sending(False)
+        self._refresh_chat_view()
+        self._reload_session_list()
+        self.statusBar().showMessage(tr("Dialog deleted"))
 
     def _new_dialog(self) -> None:
         _stop_worker(self.worker)
+        self.session_id = None  # the next message starts a new saved dialog
         self.chat_history = []
         self.chat_input.clear()
         self._set_chat_sending(False)
         self._refresh_chat_view()
-        session.clear_dialog()
+        self._reload_session_list()
         self.statusBar().showMessage(tr("New dialog started"))
 
     def send_chat(self) -> None:

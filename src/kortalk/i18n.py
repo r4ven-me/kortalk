@@ -59,6 +59,11 @@ RU: dict[str, str] = {
         "Обычная панель при этом не меняется и остаётся для быстрых разовых запросов.",
     "Dialog — context is kept between messages": "Диалог — контекст сохраняется между сообщениями",
     "New dialog": "Новый диалог",
+    "Dialogs:": "Диалоги:",
+    "Delete this dialog": "Удалить диалог",
+    "Delete this dialog permanently? This cannot be undone.":
+        "Удалить этот диалог навсегда? Это действие нельзя отменить.",
+    "Dialog deleted": "Диалог удалён",
     "Message… (Ctrl+Enter to send)": "Сообщение… (Ctrl+Enter — отправить)",
     "You": "Вы",
     "Assistant": "Ассистент",
