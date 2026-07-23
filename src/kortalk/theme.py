@@ -105,14 +105,56 @@ def card_colors(app) -> dict[str, str]:
     }
 
 
-def code_block_stylesheet(colors: dict[str, str]) -> str:
-    """Markdown `<pre>`/`<code>` styling shared by every response view
-    (popup, quick mode, dialog mode): a recessed background and a monospace
-    font so code stands out from prose."""
-    return (
-        f"pre, code {{ background-color: {colors['code_block_bg']}; "
-        f"font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace; }}"
-    )
+def markdown_content_stylesheet(colors: dict[str, str]) -> str:
+    """Markdown rendering shared by every response view (popup, quick mode,
+    dialog mode): a recessed, monospace background for `<pre>`/`<code>`,
+    and breathing room between paragraphs/headings/lists/code blocks so a
+    multi-turn dialog doesn't read as one solid, unbroken wall of text."""
+    c = colors
+    return f"""
+        pre, code {{
+            background-color: {c['code_block_bg']};
+            font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
+        }}
+        pre {{ padding: 8px 10px; margin: 8px 0; border-radius: 6px; }}
+        p {{ margin: 6px 0; }}
+        h1, h2, h3, h4, h5, h6 {{ margin: 14px 0 8px 0; }}
+        ul, ol {{ margin: 6px 0; }}
+        li {{ margin: 2px 0; }}
+        hr {{ margin: 16px 0; }}
+    """
+
+
+def scrollbar_stylesheet(colors: dict[str, str]) -> str:
+    """Slim, flat scrollbars (no arrow buttons, rounded handle) to replace
+    the OS/Fusion default — thick troughs with visible step buttons read as
+    dated next to the rest of the app's styling."""
+    c = colors
+    return f"""
+        QScrollBar:vertical {{
+            background: transparent; width: 11px; margin: 2px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {c['border']}; border-radius: 4px; min-height: 24px;
+        }}
+        QScrollBar::handle:vertical:hover {{ background: {c['highlight']}; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+            height: 0px; background: none; border: none;
+        }}
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
+
+        QScrollBar:horizontal {{
+            background: transparent; height: 11px; margin: 2px;
+        }}
+        QScrollBar::handle:horizontal {{
+            background: {c['border']}; border-radius: 4px; min-width: 24px;
+        }}
+        QScrollBar::handle:horizontal:hover {{ background: {c['highlight']}; }}
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+            width: 0px; background: none; border: none;
+        }}
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
+    """
 
 
 def window_stylesheet(colors: dict[str, str]) -> str:
@@ -218,6 +260,8 @@ def window_stylesheet(colors: dict[str, str]) -> str:
 
         QSplitter::handle {{ background-color: {c['border']}; }}
         QSplitter::handle:hover {{ background-color: {c['highlight']}; }}
+
+        {scrollbar_stylesheet(c)}
     """
 
 

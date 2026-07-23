@@ -60,6 +60,7 @@ RU: dict[str, str] = {
     "Dialog — context is kept between messages": "Диалог — контекст сохраняется между сообщениями",
     "New dialog": "Новый диалог",
     "Dialogs:": "Диалоги:",
+    "Delete": "Удалить",
     "Delete this dialog": "Удалить диалог",
     "Delete this dialog permanently? This cannot be undone.":
         "Удалить этот диалог навсегда? Это действие нельзя отменить.",

@@ -315,6 +315,8 @@ class PopupWindow(QWidget):
                 background-color: {theme.NORD['n10']}; color: {theme.NORD['n6']};
                 border-color: {theme.NORD['n10']};
             }}
+
+            {theme.scrollbar_stylesheet(colors)}
         """)
         outer.addWidget(self.card)
 
@@ -342,7 +344,7 @@ class PopupWindow(QWidget):
 
         self.browser = _StreamingBrowser(self.card)
         self.browser.document().setDocumentMargin(0)
-        self.browser.document().setDefaultStyleSheet(theme.code_block_stylesheet(colors))
+        self.browser.document().setDefaultStyleSheet(theme.markdown_content_stylesheet(colors))
         self.browser.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.browser)
 
@@ -556,6 +558,7 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(8, 8, 4, 8)
+        layout.setSpacing(8)
         layout.addWidget(QLabel(tr("Dialogs:")))
 
         self.session_list = QListWidget()
@@ -563,14 +566,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.session_list, 1)
 
         btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
         self.new_dialog_btn = QPushButton(tr("New dialog"))
         self.new_dialog_btn.clicked.connect(self._new_dialog)
-        btn_row.addWidget(self.new_dialog_btn)
-        self.delete_dialog_btn = QPushButton("🗑")
-        self.delete_dialog_btn.setObjectName("iconButton")
+        btn_row.addWidget(self.new_dialog_btn, 1)
+        self.delete_dialog_btn = QPushButton(tr("Delete"))
         self.delete_dialog_btn.setToolTip(tr("Delete this dialog"))
         self.delete_dialog_btn.clicked.connect(self._delete_dialog)
-        btn_row.addWidget(self.delete_dialog_btn)
+        btn_row.addWidget(self.delete_dialog_btn, 1)
         layout.addLayout(btn_row)
 
         self._reload_session_list()
@@ -826,7 +829,8 @@ class MainWindow(QMainWindow):
         self._apply_code_style()
 
     def _apply_code_style(self) -> None:
-        stylesheet = theme.code_block_stylesheet(theme.card_colors(QGuiApplication.instance()))
+        colors = theme.card_colors(QGuiApplication.instance())
+        stylesheet = theme.markdown_content_stylesheet(colors)
         self.output.document().setDefaultStyleSheet(stylesheet)
         self.chat_browser.document().setDefaultStyleSheet(stylesheet)
 
