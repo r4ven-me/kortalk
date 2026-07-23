@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kortalk"
-version = "0.6.6"
+version = "0.6.7"
 description = "Korvus AI popup: selected text → Claude, OpenAI, local models. Tray, streaming, two languages."
 readme = "README.md"
 license = { text = "MIT" }
