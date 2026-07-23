@@ -72,7 +72,7 @@ RU: dict[str, str] = {
         "Режим диалога — контекст сохраняется между сообщениями.",
     "New dialog started": "Начат новый диалог",
     # -- settings: general ----------------------------------------------------
-    "Settings — kortalk": "Настройки — kortalk",
+    "Settings — Kortalk": "Настройки — Kortalk",
     "General": "Общие",
     "Prompts": "Промпты",
     "Providers": "Провайдеры",

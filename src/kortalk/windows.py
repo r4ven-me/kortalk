@@ -466,7 +466,7 @@ class MainWindow(QMainWindow):
             self.session_id = sessions[0].id
             self.chat_history = session.load_session(self.session_id)
 
-        self.setWindowTitle("kortalk")
+        self.setWindowTitle("Kortalk")
         self.resize(960, 560)
         self.setWindowIcon(theme.make_tray_icon())
         theme.apply_window_theme(self)
@@ -557,7 +557,7 @@ class MainWindow(QMainWindow):
     def _build_session_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 8, 4, 8)
+        layout.setContentsMargins(8, 12, 4, 10)
         layout.setSpacing(8)
         layout.addWidget(QLabel(tr("Dialogs:")))
 
@@ -582,8 +582,8 @@ class MainWindow(QMainWindow):
     def _build_conversation_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(4, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(4, 12, 8, 10)
+        layout.setSpacing(8)
         layout.addWidget(QLabel(tr("Dialog — context is kept between messages")))
 
         # A vertical splitter (not a fixed-height input box) lets the user

@@ -86,7 +86,7 @@ def augment_path_from_login_shell() -> None:
 DESKTOP_ENTRY = """\
 [Desktop Entry]
 Type=Application
-Name=kortalk
+Name=Kortalk
 Comment=Korvus AI popup for selected text
 Exec={exec_path}
 Icon={icon_path}
@@ -321,7 +321,7 @@ class KortalkApp:
     def _update_tooltip(self) -> None:
         provider = self.config.active_provider()
         active_prompt = self.config.active_prompt()
-        lines = [f"kortalk — {provider.name}"]
+        lines = [f"Kortalk — {provider.name}"]
         if active_prompt.hotkey:
             lines.append(f"{active_prompt.name}: {active_prompt.hotkey}")
         if self.hotkeys_note():

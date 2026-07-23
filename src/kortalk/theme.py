@@ -258,8 +258,18 @@ def window_stylesheet(colors: dict[str, str]) -> str:
 
         QPushButton#iconButton {{ padding: 5px 4px; }}
 
-        QSplitter::handle {{ background-color: {c['border']}; }}
-        QSplitter::handle:hover {{ background-color: {c['highlight']}; }}
+        QSplitter::handle {{ background-color: transparent; }}
+        QSplitter::handle:horizontal {{
+            width: 11px; margin: 8px 3px;
+            background-color: {c['border']}; border-radius: 3px;
+        }}
+        QSplitter::handle:vertical {{
+            height: 11px; margin: 3px 8px;
+            background-color: {c['border']}; border-radius: 3px;
+        }}
+        QSplitter::handle:horizontal:hover, QSplitter::handle:vertical:hover {{
+            background-color: {c['highlight']};
+        }}
 
         {scrollbar_stylesheet(c)}
     """

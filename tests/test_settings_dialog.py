@@ -198,7 +198,7 @@ def test_dialog_builds_in_russian(qtbot, config):
     try:
         dlg = SettingsDialog(config)
         qtbot.addWidget(dlg)
-        assert dlg.windowTitle() == "Настройки — kortalk"
+        assert dlg.windowTitle() == "Настройки — Kortalk"
     finally:
         set_language("en")
 

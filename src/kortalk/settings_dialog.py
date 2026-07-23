@@ -42,7 +42,7 @@ AUTOSTART_FILE = Path.home() / ".config" / "autostart" / "kortalk.desktop"
 AUTOSTART_DESKTOP = """\
 [Desktop Entry]
 Type=Application
-Name=kortalk
+Name=Kortalk
 Comment=Korvus AI popup for selected text
 Exec={exec_path}
 Icon={icon_path}
@@ -69,7 +69,7 @@ class SettingsDialog(QDialog):
     def __init__(self, config: Config, parent=None):
         super().__init__(parent)
         self.config = config
-        self.setWindowTitle(tr("Settings — kortalk"))
+        self.setWindowTitle(tr("Settings — Kortalk"))
         self.resize(680, 520)
         theme.apply_window_theme(self)
 
@@ -293,7 +293,7 @@ class SettingsDialog(QDialog):
 
     def _remove_prompt(self) -> None:
         if self.prompt_list.count() <= 1:
-            QMessageBox.information(self, "kortalk", tr("Cannot delete the last prompt."))
+            QMessageBox.information(self, "Kortalk", tr("Cannot delete the last prompt."))
             return
         self.prompt_list.takeItem(self.prompt_list.currentRow())
 
@@ -466,7 +466,7 @@ class SettingsDialog(QDialog):
     def _remove_provider(self) -> None:
         row = self.provider_list.currentRow()
         if row < 0 or self.provider_list.count() <= 1:
-            QMessageBox.information(self, "kortalk", tr("Cannot delete the last provider."))
+            QMessageBox.information(self, "Kortalk", tr("Cannot delete the last provider."))
             return
         item = self.provider_list.takeItem(row)
         p: Provider = item.data(Qt.ItemDataRole.UserRole)
@@ -522,7 +522,7 @@ class SettingsDialog(QDialog):
                 AUTOSTART_FILE.unlink()
         except OSError as exc:
             QMessageBox.warning(
-                self, "kortalk",
+                self, "Kortalk",
                 tr("Failed to configure autostart: {error}").format(error=exc))
 
         self.saved.emit()
