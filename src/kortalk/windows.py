@@ -5,12 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 
 import shiboken6
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer, Signal
+from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
+    QColor,
     QCursor,
     QGuiApplication,
     QKeySequence,
+    QPainter,
     QPalette,
     QShortcut,
     QTextCharFormat,
@@ -29,6 +31,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
+    QSplitterHandle,
     QStackedWidget,
     QTextBrowser,
     QToolBar,
@@ -68,6 +71,61 @@ def _style_as_stop(button: QPushButton, active: bool) -> None:
         """)
     else:
         button.setStyleSheet("")
+
+
+class _InsetSplitterHandle(QSplitterHandle):
+    """Paints a short, rounded-end bar centered in the handle's own track,
+    instead of a line spanning it edge-to-edge.
+
+    QSplitter::handle's CSS width/height/margin turned out unreliable: Qt
+    computes a single shared handleWidth() from whichever orientation's
+    rule it happens to pick, regardless of the splitter's actual
+    orientation — so two splitters needing different thin/thick styling
+    fought each other. Painting the handle directly sidesteps that
+    entirely and is what makes the "short, rounded, floating" look actually
+    possible (the draggable track still spans the full length)."""
+
+    _INSET = 8      # blank space left at each end of the bar's length
+    _THICKNESS = 4  # visible bar thickness
+
+    def __init__(self, orientation, parent):
+        super().__init__(orientation, parent)
+        self._hovered = False
+
+    def enterEvent(self, event) -> None:
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event) -> None:
+        colors = theme.card_colors(QGuiApplication.instance())
+        color = QColor(colors["highlight"] if self._hovered else colors["border"])
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        rect = self.rect()
+        t = self._THICKNESS
+        if self.orientation() == Qt.Orientation.Horizontal:
+            bar = QRectF((rect.width() - t) / 2, self._INSET, t, rect.height() - 2 * self._INSET)
+        else:
+            bar = QRectF(self._INSET, (rect.height() - t) / 2, rect.width() - 2 * self._INSET, t)
+        painter.drawRoundedRect(bar, t / 2, t / 2)
+
+
+class _InsetSplitter(QSplitter):
+    """QSplitter with a short, rounded, inset handle (see
+    _InsetSplitterHandle) — used for the left/right dividers (quick mode,
+    and the session list next to the dialog) so both read as the same
+    shape rather than a line running the full height."""
+
+    def createHandle(self):
+        return _InsetSplitterHandle(self.orientation(), self)
 
 
 _THINKING_TICK_MS = 400   # animated ellipsis while waiting for the first chunk
@@ -517,12 +575,12 @@ class MainWindow(QMainWindow):
     # -- page construction ------------------------------------------------------
 
     def _build_quick_page(self) -> QWidget:
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(4)
+        splitter = _InsetSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(8)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(8, 8, 4, 8)
+        left_layout.setContentsMargins(8, 8, 10, 8)
         left_layout.addWidget(QLabel(tr("Prompt + text:")))
         self.input_edit = QPlainTextEdit()
         left_layout.addWidget(self.input_edit)
@@ -533,7 +591,7 @@ class MainWindow(QMainWindow):
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(4, 8, 8, 8)
+        right_layout.setContentsMargins(10, 8, 8, 8)
         right_layout.addWidget(QLabel(tr("Response:")))
         self.output = _StreamingBrowser()
         right_layout.addWidget(self.output)
@@ -548,8 +606,8 @@ class MainWindow(QMainWindow):
         outer = QHBoxLayout(page)
         outer.setContentsMargins(0, 0, 0, 0)
 
-        page_splitter = QSplitter(Qt.Orientation.Horizontal)
-        page_splitter.setHandleWidth(4)
+        page_splitter = _InsetSplitter(Qt.Orientation.Horizontal)
+        page_splitter.setHandleWidth(8)
         page_splitter.addWidget(self._build_session_panel())
         page_splitter.addWidget(self._build_conversation_panel())
         page_splitter.setSizes([220, 700])
