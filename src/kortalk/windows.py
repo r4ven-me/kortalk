@@ -518,6 +518,7 @@ class MainWindow(QMainWindow):
 
     def _build_quick_page(self) -> QWidget:
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(4)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -548,6 +549,7 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
 
         page_splitter = QSplitter(Qt.Orientation.Horizontal)
+        page_splitter.setHandleWidth(4)
         page_splitter.addWidget(self._build_session_panel())
         page_splitter.addWidget(self._build_conversation_panel())
         page_splitter.setSizes([220, 700])
@@ -557,7 +559,7 @@ class MainWindow(QMainWindow):
     def _build_session_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 12, 4, 10)
+        layout.setContentsMargins(8, 12, 10, 10)
         layout.setSpacing(8)
         layout.addWidget(QLabel(tr("Dialogs:")))
 
@@ -582,21 +584,30 @@ class MainWindow(QMainWindow):
     def _build_conversation_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(4, 12, 8, 10)
+        layout.setContentsMargins(10, 12, 8, 10)
         layout.setSpacing(8)
         layout.addWidget(QLabel(tr("Dialog — context is kept between messages")))
 
         # A vertical splitter (not a fixed-height input box) lets the user
         # drag the divider up when a message needs more room to compose.
         chat_splitter = QSplitter(Qt.Orientation.Vertical)
+        chat_splitter.setHandleWidth(4)
 
+        # chat_browser and the input row are wrapped in their own containers
+        # (rather than added to the splitter directly) purely to get a
+        # margin on the side facing the divider — a thin handle plus a
+        # bit of real breathing room either side of it, not a thicker bar.
+        browser_container = QWidget()
+        browser_layout = QVBoxLayout(browser_container)
+        browser_layout.setContentsMargins(0, 0, 0, 8)
         self.chat_browser = _StreamingBrowser()
         self._refresh_chat_view()
-        chat_splitter.addWidget(self.chat_browser)
+        browser_layout.addWidget(self.chat_browser)
+        chat_splitter.addWidget(browser_container)
 
         input_widget = QWidget()
         input_row = QHBoxLayout(input_widget)
-        input_row.setContentsMargins(0, 0, 0, 0)
+        input_row.setContentsMargins(0, 8, 0, 0)
         self.chat_input = QPlainTextEdit()
         self.chat_input.setPlaceholderText(tr("Message… (Ctrl+Enter to send)"))
         self.chat_input.setMinimumHeight(40)
