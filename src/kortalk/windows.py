@@ -85,7 +85,9 @@ class _InsetSplitterHandle(QSplitterHandle):
     entirely and is what makes the "short, rounded, floating" look actually
     possible (the draggable track still spans the full length)."""
 
-    _INSET = 4      # blank space left at each end of the bar's length
+    _INSET = 16     # blank space left at each end of the bar's length —
+                     # matches the 16px margin around the markdown <hr>
+                     # dividers in the transcript (theme.markdown_content_stylesheet)
     _THICKNESS = 4  # visible bar thickness
 
     def __init__(self, orientation, parent):
@@ -177,6 +179,8 @@ class _StreamingBrowser(QTextBrowser):
         self._buffer = ""
         self._cursor_shown = False
         self.setMarkdown(prefix)
+        self._scroll_to_bottom()  # setMarkdown() resets the scrollbar to the
+        # top; a fresh turn should immediately show where the answer streams in
         self._thinking_base = placeholder
         self._thinking_shown_len = 0
         self._thinking_frame = 0
