@@ -85,7 +85,7 @@ class _InsetSplitterHandle(QSplitterHandle):
     entirely and is what makes the "short, rounded, floating" look actually
     possible (the draggable track still spans the full length)."""
 
-    _INSET = 8      # blank space left at each end of the bar's length
+    _INSET = 4      # blank space left at each end of the bar's length
     _THICKNESS = 4  # visible bar thickness
 
     def __init__(self, orientation, parent):
