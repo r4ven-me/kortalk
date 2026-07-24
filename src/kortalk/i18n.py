@@ -43,20 +43,13 @@ RU: dict[str, str] = {
     "Stopped": "Остановлено",
     "Open in window": "В окно",
     "Provider:": "Провайдер:",
-    "Prompt + text:": "Промпт + текст:",
     "Send (Ctrl+Enter)": "Отправить (Ctrl+Enter)",
-    "Response:": "Ответ:",
     "Ready": "Готов",
     "Done": "Готово",
     "Requesting {name}…": "Запрос к {name}…",
     "Provider not found — check settings": "Провайдер не найден — проверьте настройки",
     # -- dialog mode ------------------------------------------------------------
     "Dialog": "Диалог",
-    "Quick mode": "Быстрый режим",
-    "Dialog mode: keeps the conversation and its context across "
-    "messages. The quick panel stays untouched for fast one-off asks.":
-        "Режим диалога: сохраняет переписку и её контекст между сообщениями. "
-        "Обычная панель при этом не меняется и остаётся для быстрых разовых запросов.",
     "Dialog — context is kept between messages": "Диалог — контекст сохраняется между сообщениями",
     "New dialog": "Новый диалог",
     "Dialogs:": "Диалоги:",

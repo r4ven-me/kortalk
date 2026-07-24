@@ -32,10 +32,8 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QSplitterHandle,
-    QStackedWidget,
     QTextBrowser,
     QToolBar,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -85,14 +83,18 @@ class _InsetSplitterHandle(QSplitterHandle):
     entirely and is what makes the "short, rounded, floating" look actually
     possible (the draggable track still spans the full length)."""
 
-    _INSET = 16     # blank space left at each end of the bar's length —
+    _INSET = 16     # blank space left at the leading end of the bar's length —
                      # matches the 16px margin around the markdown <hr>
                      # dividers in the transcript (theme.markdown_content_stylesheet)
     _THICKNESS = 4  # visible bar thickness
 
-    def __init__(self, orientation, parent):
+    def __init__(self, orientation, parent, trailing_inset: int | None = None):
         super().__init__(orientation, parent)
         self._hovered = False
+        # Lets one end of the bar run closer to the panel's edge than the
+        # other — the dialog list/conversation divider's bottom end sat too
+        # far short of the buttons row beneath it otherwise.
+        self._trailing_inset = self._INSET if trailing_inset is None else trailing_inset
 
     def enterEvent(self, event) -> None:
         self._hovered = True
@@ -114,20 +116,25 @@ class _InsetSplitterHandle(QSplitterHandle):
         rect = self.rect()
         t = self._THICKNESS
         if self.orientation() == Qt.Orientation.Horizontal:
-            bar = QRectF((rect.width() - t) / 2, self._INSET, t, rect.height() - 2 * self._INSET)
+            length = rect.height() - self._INSET - self._trailing_inset
+            bar = QRectF((rect.width() - t) / 2, self._INSET, t, length)
         else:
-            bar = QRectF(self._INSET, (rect.height() - t) / 2, rect.width() - 2 * self._INSET, t)
+            length = rect.width() - self._INSET - self._trailing_inset
+            bar = QRectF(self._INSET, (rect.height() - t) / 2, length, t)
         painter.drawRoundedRect(bar, t / 2, t / 2)
 
 
 class _InsetSplitter(QSplitter):
     """QSplitter with a short, rounded, inset handle (see
-    _InsetSplitterHandle) — used for the left/right dividers (quick mode,
-    and the session list next to the dialog) so both read as the same
-    shape rather than a line running the full height."""
+    _InsetSplitterHandle) — used for the divider between the session list
+    and the dialog panel."""
+
+    def __init__(self, orientation, parent=None, trailing_inset: int | None = None):
+        super().__init__(orientation, parent)
+        self._trailing_inset = trailing_inset
 
     def createHandle(self):
-        return _InsetSplitterHandle(self.orientation(), self)
+        return _InsetSplitterHandle(self.orientation(), self, self._trailing_inset)
 
 
 _THINKING_TICK_MS = 400   # animated ellipsis while waiting for the first chunk
@@ -143,8 +150,9 @@ class _StreamingBrowser(QTextBrowser):
     approach of calling setMarkdown() on a timer to re-render everything —
     that rebuilt the whole document several times a second, which fought
     any text selection the user was making and made the scrollbar visibly
-    jump even while parked at the bottom. Markdown formatting (bold, code
-    blocks, links) is applied once, when the response is complete.
+    jump even while parked at the bottom. Markdown formatting (bold, links,
+    syntax-highlighted code blocks) is applied once, when the response is
+    complete.
 
     Two small animations mark the two waiting states: an animated "Thinking…"
     ellipsis before the first chunk arrives, and a blinking caret at the
@@ -178,8 +186,8 @@ class _StreamingBrowser(QTextBrowser):
         self._prefix = prefix
         self._buffer = ""
         self._cursor_shown = False
-        self.setMarkdown(prefix)
-        self._scroll_to_bottom()  # setMarkdown() resets the scrollbar to the
+        self._set_content(prefix)
+        self._scroll_to_bottom()  # _set_content() resets the scrollbar to the
         # top; a fresh turn should immediately show where the answer streams in
         self._thinking_base = placeholder
         self._thinking_shown_len = 0
@@ -216,12 +224,16 @@ class _StreamingBrowser(QTextBrowser):
         self._stop_animations()
         self._prefix = ""
         self._buffer = ""
-        self.setMarkdown(placeholder)
+        self._set_content(placeholder)
 
     def text_content(self) -> str:
         return self._buffer
 
     # -- internals ------------------------------------------------------------
+
+    def _set_content(self, markdown_text: str) -> None:
+        dark = theme.is_dark(QGuiApplication.instance())
+        self.setHtml(theme.render_answer_html(markdown_text, dark))
 
     def _stop_animations(self) -> None:
         self._thinking_timer.stop()
@@ -288,7 +300,7 @@ class _StreamingBrowser(QTextBrowser):
 
     def _render_final(self, markdown_text: str) -> None:
         stick_to_bottom = self._is_stuck_to_bottom()
-        self.setMarkdown(self._prefix + markdown_text)
+        self._set_content(self._prefix + markdown_text)
         if stick_to_bottom:
             self._scroll_to_bottom()
 
@@ -406,7 +418,8 @@ class PopupWindow(QWidget):
 
         self.browser = _StreamingBrowser(self.card)
         self.browser.document().setDocumentMargin(0)
-        self.browser.document().setDefaultStyleSheet(theme.markdown_content_stylesheet(colors))
+        self.browser.document().setDefaultStyleSheet(
+            theme.response_stylesheet(colors, theme.is_dark(app)))
         self.browser.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.browser)
 
@@ -497,19 +510,8 @@ class PopupWindow(QWidget):
 
 
 class MainWindow(QMainWindow):
-    """Full window with two modes, switched by a dedicated toolbar button:
-
-    - quick mode (default): prompt+text on the left, response on the right —
-      every send is independent, matching the popup's fast, stateless feel.
-    - dialog mode: a single conversation thread that keeps full context
-      (every earlier turn is resent to the provider), for when a quick
-      one-off isn't enough and the user wants to go back and forth.
-
-    The two are kept on separate stack pages rather than blended into one
-    view: dialog mode is opt-in and never changes what the quick panel does,
-    so reaching for fast, no-context answers stays exactly as immediate as
-    before.
-    """
+    """Full window: a session list next to a single conversation thread that
+    keeps full context (every earlier turn is resent to the provider)."""
 
     settings_requested = Signal()
 
@@ -547,70 +549,27 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
 
-        self.chat_toggle = QToolButton()
-        self.chat_toggle.setObjectName("chatToggle")
-        self.chat_toggle.setCheckable(True)
-        self.chat_toggle.setToolTip(tr(
-            "Dialog mode: keeps the conversation and its context across "
-            "messages. The quick panel stays untouched for fast one-off asks."
-        ))
-        self._set_chat_toggle_label(False)
-        self.chat_toggle.toggled.connect(self._toggle_chat_mode)
-        toolbar.addWidget(self.chat_toggle)
-
         settings_action = QAction(tr("Settings"), self)
         settings_action.triggered.connect(self.settings_requested.emit)
         toolbar.addAction(settings_action)
 
-        self.stack = QStackedWidget()
-        self.setCentralWidget(self.stack)
-
-        self.quick_page = self._build_quick_page()
         self.chat_page = self._build_chat_page()
-        self.stack.addWidget(self.quick_page)
-        self.stack.addWidget(self.chat_page)
+        self.setCentralWidget(self.chat_page)
         self._apply_code_style()
 
-        QShortcut(QKeySequence("Ctrl+Return"), self, self._send_active)
+        QShortcut(QKeySequence("Ctrl+Return"), self, self.send_chat)
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self.close)
 
         self.statusBar().showMessage(tr("Ready"))
 
     # -- page construction ------------------------------------------------------
 
-    def _build_quick_page(self) -> QWidget:
-        splitter = _InsetSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(8)
-
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(8, 8, 10, 8)
-        left_layout.addWidget(QLabel(tr("Prompt + text:")))
-        self.input_edit = QPlainTextEdit()
-        left_layout.addWidget(self.input_edit)
-        self.send_btn = QPushButton(tr("Send (Ctrl+Enter)"))
-        self.send_btn.setObjectName("primaryButton")
-        self.send_btn.clicked.connect(self._send_or_stop)
-        left_layout.addWidget(self.send_btn)
-
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(10, 8, 8, 8)
-        right_layout.addWidget(QLabel(tr("Response:")))
-        self.output = _StreamingBrowser()
-        right_layout.addWidget(self.output)
-
-        splitter.addWidget(left)
-        splitter.addWidget(right)
-        splitter.setSizes([480, 480])
-        return splitter
-
     def _build_chat_page(self) -> QWidget:
         page = QWidget()
         outer = QHBoxLayout(page)
         outer.setContentsMargins(0, 0, 0, 0)
 
-        page_splitter = _InsetSplitter(Qt.Orientation.Horizontal)
+        page_splitter = _InsetSplitter(Qt.Orientation.Horizontal, trailing_inset=4)
         page_splitter.setHandleWidth(8)
         page_splitter.addWidget(self._build_session_panel())
         page_splitter.addWidget(self._build_conversation_panel())
@@ -689,34 +648,16 @@ class MainWindow(QMainWindow):
 
     # -- dialog mode --------------------------------------------------------------
 
-    def _set_chat_toggle_label(self, in_chat_mode: bool) -> None:
-        # The colour change alone (QSS :checked state) is easy to miss in a
-        # toolbar — swapping the label makes "how do I get back" obvious.
-        text = ("◀ " + tr("Quick mode")) if in_chat_mode else ("💬 " + tr("Dialog"))
-        self.chat_toggle.setText(text)
-
-    def _toggle_chat_mode(self, checked: bool) -> None:
-        self._set_chat_toggle_label(checked)
-        if checked:
-            self._seed_chat_from_quick()
-            self.stack.setCurrentWidget(self.chat_page)
-            self.chat_input.setFocus()
-        else:
-            self.stack.setCurrentWidget(self.quick_page)
-
-    def _seed_chat_from_quick(self) -> None:
-        # First switch only: carry the quick panel's last Q&A into the
-        # dialog so context isn't lost when moving between the two modes.
-        # Once the dialog has turns of its own, it's left alone.
-        if not self.chat_history:
-            prompt = self.input_edit.toPlainText().strip()
-            answer = self.output.text_content().strip()
-            if prompt and answer:
-                self.chat_history = [
-                    {"role": "user", "content": prompt},
-                    {"role": "assistant", "content": answer},
-                ]
-                self._persist_dialog()
+    def seed_dialog_from_popup(self, prompt: str, answer: str) -> None:
+        # Carries a popup's prompt/answer into the dialog, so opening it in
+        # the window doesn't lose that context — but only into an empty
+        # dialog; one with turns of its own is left alone.
+        if not self.chat_history and prompt and answer:
+            self.chat_history = [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": answer},
+            ]
+            self._persist_dialog()
         self._refresh_chat_view()
 
     def _chat_transcript(self, pending_answer: bool) -> str:
@@ -877,12 +818,6 @@ class MainWindow(QMainWindow):
         self._set_chat_sending(False)
         self.statusBar().showMessage(tr("Error"))
 
-    def _send_active(self) -> None:
-        if self.stack.currentWidget() is self.chat_page:
-            self.send_chat()
-        else:
-            self.send()
-
     # -- shared -------------------------------------------------------------------
 
     def showEvent(self, event) -> None:
@@ -902,10 +837,10 @@ class MainWindow(QMainWindow):
         self._apply_code_style()
 
     def _apply_code_style(self) -> None:
-        colors = theme.card_colors(QGuiApplication.instance())
-        stylesheet = theme.markdown_content_stylesheet(colors)
-        self.output.document().setDefaultStyleSheet(stylesheet)
-        self.chat_browser.document().setDefaultStyleSheet(stylesheet)
+        app = QGuiApplication.instance()
+        colors = theme.card_colors(app)
+        self.chat_browser.document().setDefaultStyleSheet(
+            theme.response_stylesheet(colors, theme.is_dark(app)))
 
     def reload_providers(self) -> None:
         self.provider_combo.blockSignals(True)
@@ -918,58 +853,7 @@ class MainWindow(QMainWindow):
         self.provider_combo.blockSignals(False)
 
     def set_input(self, text: str) -> None:
-        self.input_edit.setPlainText(text)
-
-    def set_output(self, text: str) -> None:
-        self.output.finish(text)
-
-    def send(self) -> None:
-        text = self.input_edit.toPlainText().strip()
-        if not text:
-            return
-        _stop_worker(self.worker)
-
-        provider = self.config.provider(self.provider_combo.currentData())
-        if provider is None:
-            self.statusBar().showMessage(tr("Provider not found — check settings"))
-            return
-
-        self._set_quick_sending(True)
-        self.statusBar().showMessage(tr("Requesting {name}…").format(name=provider.name))
-        self.output.begin_stream(tr("Thinking"))
-
-        self.worker = AIWorker(provider, [{"role": "user", "content": text}],
-                               int(self.config.get("timeout")), int(self.config.get("max_tokens")))
-        self.worker.chunk.connect(self.output.append_chunk)
-        self.worker.finished_ok.connect(self._on_finished)
-        self.worker.failed.connect(self._on_failed)
-        self.worker.start()
-
-    def _set_quick_sending(self, sending: bool) -> None:
-        self.send_btn.setText(tr("Stop") if sending else tr("Send (Ctrl+Enter)"))
-        _style_as_stop(self.send_btn, sending)
-
-    def _send_or_stop(self) -> None:
-        # While a response is streaming the same button doubles as Stop —
-        # no separate control needed, and it's always the obvious thing to
-        # click since it's the one that just said "Send".
-        if _worker_running(self.worker):
-            _stop_worker(self.worker)
-            self.output.finish(self.output.text_content())
-            self._set_quick_sending(False)
-            self.statusBar().showMessage(tr("Stopped"))
-        else:
-            self.send()
-
-    def _on_finished(self, text: str) -> None:
-        self.output.finish(text)
-        self._set_quick_sending(False)
-        self.statusBar().showMessage(tr("Done"))
-
-    def _on_failed(self, message: str) -> None:
-        self.output.fail(message)
-        self._set_quick_sending(False)
-        self.statusBar().showMessage(tr("Error"))
+        self.chat_input.setPlainText(text)
 
     def _provider_changed(self) -> None:
         pid = self.provider_combo.currentData()

@@ -427,8 +427,7 @@ class KortalkApp:
 
     def _popup_to_window(self, prompt: str, answer: str) -> None:
         window = self._ensure_main_window()
-        window.set_input(prompt)  # keep the original context, not just the answer
-        window.set_output(answer)
+        window.seed_dialog_from_popup(prompt, answer)
         window.show()
         window.raise_()
         window.activateWindow()

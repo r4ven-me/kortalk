@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import html
 import os
+import re
 from pathlib import Path
 
+import markdown as _markdown
+from pygments import highlight
+from pygments.formatters import HtmlFormatter
+from pygments.lexers import TextLexer, get_lexer_by_name, guess_lexer
+from pygments.util import ClassNotFound
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
@@ -106,8 +113,8 @@ def card_colors(app) -> dict[str, str]:
 
 
 def markdown_content_stylesheet(colors: dict[str, str]) -> str:
-    """Markdown rendering shared by every response view (popup, quick mode,
-    dialog mode): a recessed, monospace background for `<pre>`/`<code>`,
+    """Markdown rendering shared by every response view (popup, dialog):
+    a recessed, monospace background for `<pre>`/`<code>`,
     and breathing room between paragraphs/headings/lists/code blocks so a
     multi-turn dialog doesn't read as one solid, unbroken wall of text."""
     c = colors
@@ -123,6 +130,110 @@ def markdown_content_stylesheet(colors: dict[str, str]) -> str:
         li {{ margin: 2px 0; }}
         hr {{ margin: 16px 0; }}
     """
+
+
+# -- syntax-highlighted code blocks -----------------------------------------
+#
+# Qt's own Markdown-to-richtext converter (QTextDocument.setMarkdown) has no
+# concept of syntax highlighting, so fenced code blocks are pulled out and
+# highlighted with Pygments before the rest of the text is converted to HTML
+# and handed to QTextBrowser.setHtml() — the only way to get colour-coded
+# tokens and a GitHub/ChatGPT-style code card (language label, its own
+# rounded panel) into a QTextDocument.
+
+_CODE_CSS_CLASS = "code-hl"
+_CODE_TOKEN = "\x00KORTALKCODEBLOCK{}\x00"
+_FENCE_RE = re.compile(r"^```([^\n`]*)\n(.*?)\n```[ \t]*$", re.MULTILINE | re.DOTALL)
+
+
+def pygments_style_name(dark: bool) -> str:
+    """Pygments ships a Nord style for dark mode; light mode has no official
+    Nord counterpart, so a similarly clean, low-contrast light style stands
+    in rather than a jarring high-contrast default."""
+    return "nord" if dark else "friendly"
+
+
+def _lexer_for(language: str, code: str):
+    if language:
+        try:
+            return get_lexer_by_name(language, stripall=False)
+        except ClassNotFound:
+            pass
+    try:
+        return guess_lexer(code)
+    except ClassNotFound:
+        return TextLexer()
+
+
+def _highlighted_block(language: str, code: str, dark: bool) -> str:
+    lexer = _lexer_for(language, code)
+    body = highlight(code, lexer, HtmlFormatter(nowrap=True, style=pygments_style_name(dark)))
+    label = language or (lexer.aliases[0] if lexer.aliases else "text")
+    header = f'<div class="code-lang">{html.escape(label)}</div>'
+    return f'<div class="{_CODE_CSS_CLASS}">{header}<pre><code>{body}</code></pre></div>'
+
+
+def render_answer_html(markdown_text: str, dark: bool) -> str:
+    """Converts a full AI answer (Markdown) to HTML, syntax-highlighting any
+    fenced code blocks. Used only for the complete, final render — chunks
+    are still streamed in as plain text while a response is arriving."""
+    blocks: list[str] = []
+
+    def _stash(match: re.Match) -> str:
+        blocks.append(_highlighted_block(match.group(1).strip(), match.group(2), dark))
+        return _CODE_TOKEN.format(len(blocks) - 1)
+
+    stashed = _FENCE_RE.sub(_stash, markdown_text)
+    rendered = _markdown.markdown(stashed, extensions=["extra", "sane_lists"])
+    for i, block_html in enumerate(blocks):
+        token = _CODE_TOKEN.format(i)
+        rendered = rendered.replace(f"<p>{token}</p>", block_html).replace(token, block_html)
+    return rendered
+
+
+def pygments_stylesheet(colors: dict[str, str], dark: bool) -> str:
+    """CSS for the highlighted code cards: Pygments' own token-colour rules,
+    plus a card look (recessed background, rounded corners, a small language
+    label) so code reads as clearly set apart from prose.
+
+    Qt's rich-text engine doesn't paint a `<div>` wrapper's own background/
+    border — only real blocks (`<p>`, `<pre>`) get painted — so the card look
+    is built from the label and the `<pre>` themselves (top-rounded label,
+    bottom-rounded code, touching borders) rather than from the wrapping div."""
+    c = colors
+    cls = _CODE_CSS_CLASS
+    token_css = HtmlFormatter(style=pygments_style_name(dark)).get_style_defs(f".{cls}")
+    return f"""
+        {token_css}
+        .{cls} .code-lang {{
+            color: {c['muted']};
+            background-color: {c['code_bg']};
+            font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
+            font-size: 11px;
+            padding: 4px 12px;
+            margin: 12px 0 0 0;
+            border: 1px solid {c['border']};
+            border-bottom: none;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+        }}
+        .{cls} pre {{
+            background-color: {c['code_block_bg']};
+            margin: 0 0 12px 0;
+            padding: 10px 14px;
+            border: 1px solid {c['border']};
+            border-top: none;
+            border-bottom-left-radius: 8px;
+            border-bottom-right-radius: 8px;
+        }}
+        .{cls} code {{ background-color: {c['code_block_bg']}; }}
+    """
+
+
+def response_stylesheet(colors: dict[str, str], dark: bool) -> str:
+    """Combined stylesheet for every response view (popup, dialog): base
+    Markdown spacing plus syntax-highlighted code cards."""
+    return markdown_content_stylesheet(colors) + pygments_stylesheet(colors, dark)
 
 
 def scrollbar_stylesheet(colors: dict[str, str]) -> str:
@@ -241,10 +352,6 @@ def window_stylesheet(colors: dict[str, str]) -> str:
             border-color: {c['highlight']};
         }}
         QToolBar QToolButton {{ padding: 5px 12px; margin: 0 2px; }}
-        QToolButton#chatToggle:checked {{
-            background-color: {c['highlight']}; color: {c['highlight_text']};
-            border-color: {c['highlight']}; font-weight: 600;
-        }}
 
         QPushButton#primaryButton {{
             background-color: {c['highlight']}; color: {c['highlight_text']};
