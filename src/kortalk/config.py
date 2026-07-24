@@ -19,6 +19,8 @@ GENERAL_DEFAULTS = {
     "font_size": 0,             # 0 = system size
     "popup_width": 560,
     "popup_max_height": 600,
+    "window_width": 960,
+    "window_height": 560,
     "timeout": 180,             # seconds, for CLI/HTTP requests
     "max_tokens": 64000,        # response token limit (Anthropic API)
     "active_provider": "claude-cli",

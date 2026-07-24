@@ -114,16 +114,29 @@ def card_colors(app) -> dict[str, str]:
 
 def markdown_content_stylesheet(colors: dict[str, str]) -> str:
     """Markdown rendering shared by every response view (popup, dialog):
-    a recessed, monospace background for `<pre>`/`<code>`,
-    and breathing room between paragraphs/headings/lists/code blocks so a
-    multi-turn dialog doesn't read as one solid, unbroken wall of text."""
+    breathing room between paragraphs/headings/lists/code blocks so a
+    multi-turn dialog doesn't read as one solid, unbroken wall of text,
+    plus a small, subtle chip style for inline `code` spans.
+
+    Fenced code blocks never reach the bare `pre` rule below — they're
+    rendered as a `.code-hl` card instead (see pygments_stylesheet) — so
+    this only has to cover the rare indented-code-block fallback. It
+    deliberately has no border-radius/margin: Qt splits a multi-line `<pre>`
+    into one QTextBlock per line, and per-block radius/margin there would
+    paint a separate rounded pill per line instead of a single block."""
     c = colors
     return f"""
-        pre, code {{
+        pre {{
             background-color: {c['code_block_bg']};
             font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
+            padding: 0 8px;
         }}
-        pre {{ padding: 8px 10px; margin: 8px 0; border-radius: 6px; }}
+        code {{
+            background-color: {c['code_bg']};
+            font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
+            padding: 1px 5px;
+            border-radius: 4px;
+        }}
         p {{ margin: 6px 0; }}
         h1, h2, h3, h4, h5, h6 {{ margin: 14px 0 8px 0; }}
         ul, ol {{ margin: 6px 0; }}
@@ -168,9 +181,16 @@ def _lexer_for(language: str, code: str):
 def _highlighted_block(language: str, code: str, dark: bool) -> str:
     lexer = _lexer_for(language, code)
     body = highlight(code, lexer, HtmlFormatter(nowrap=True, style=pygments_style_name(dark)))
+    # Qt's rich-text HTML importer splits a <pre> at every literal newline
+    # into its own QTextBlock, so any per-block CSS (background, radius,
+    # padding) on it painted a separate little rounded pill per source
+    # line rather than one card. <br/> line breaks inside a single <p>
+    # (with white-space:pre to keep indentation) stay one QTextBlock —
+    # the block-level styling below then applies exactly once.
+    body = body.rstrip("\n").replace("\n", "<br />")
     label = language or (lexer.aliases[0] if lexer.aliases else "text")
     header = f'<div class="code-lang">{html.escape(label)}</div>'
-    return f'<div class="{_CODE_CSS_CLASS}">{header}<pre><code>{body}</code></pre></div>'
+    return f'<div class="{_CODE_CSS_CLASS}">{header}<p class="code-body">{body}</p></div>'
 
 
 def render_answer_html(markdown_text: str, dark: bool) -> str:
@@ -198,8 +218,13 @@ def pygments_stylesheet(colors: dict[str, str], dark: bool) -> str:
 
     Qt's rich-text engine doesn't paint a `<div>` wrapper's own background/
     border — only real blocks (`<p>`, `<pre>`) get painted — so the card look
-    is built from the label and the `<pre>` themselves (top-rounded label,
-    bottom-rounded code, touching borders) rather than from the wrapping div."""
+    is built from the label and the code paragraph themselves (top-rounded
+    label, bottom-rounded code, touching borders) rather than from the
+    wrapping div. The code itself is a single `<p class="code-body">` with
+    `<br/>` line breaks (see _highlighted_block) rather than a `<pre>` with
+    literal newlines — Qt splits the latter into one QTextBlock per line,
+    which turned this same background/radius into a separate little pill
+    per line instead of one card."""
     c = colors
     cls = _CODE_CSS_CLASS
     token_css = HtmlFormatter(style=pygments_style_name(dark)).get_style_defs(f".{cls}")
@@ -217,8 +242,10 @@ def pygments_stylesheet(colors: dict[str, str], dark: bool) -> str:
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
         }}
-        .{cls} pre {{
+        .{cls} .code-body {{
+            white-space: pre;
             background-color: {c['code_block_bg']};
+            font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
             margin: 0 0 12px 0;
             padding: 10px 14px;
             border: 1px solid {c['border']};
@@ -226,7 +253,6 @@ def pygments_stylesheet(colors: dict[str, str], dark: bool) -> str:
             border-bottom-left-radius: 8px;
             border-bottom-right-radius: 8px;
         }}
-        .{cls} code {{ background-color: {c['code_block_bg']}; }}
     """
 
 

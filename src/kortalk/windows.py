@@ -531,7 +531,7 @@ class MainWindow(QMainWindow):
             self.chat_history = session.load_session(self.session_id)
 
         self.setWindowTitle("Kortalk")
-        self.resize(960, 560)
+        self.resize(int(config.get("window_width")), int(config.get("window_height")))
         self.setWindowIcon(theme.make_tray_icon())
         theme.apply_window_theme(self)
 
@@ -864,4 +864,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         # The window closes, the application stays alive in the tray.
         _stop_worker(self.worker)
+        self.config.set("window_width", self.width())
+        self.config.set("window_height", self.height())
         super().closeEvent(event)
