@@ -107,6 +107,10 @@ def card_colors(app) -> dict[str, str]:
         # a code block should read as recessed — darker than the page in
         # dark mode, not the lighter shade that works for a hovered button.
         "code_block_bg": QColor(NORD["n00"]).darker(130).name() if dark else NORD["n4"],
+        # Inline `code` chips need their own shade: code_bg equals field_bg
+        # (the QTextBrowser's own background) in dark mode, which made
+        # inline code invisible — n2 is a step lighter than both.
+        "inline_code_bg": NORD["n2"] if dark else NORD["n5"],
         "highlight": NORD["n10"],
         "highlight_text": NORD["n6"],
     }
@@ -132,10 +136,9 @@ def markdown_content_stylesheet(colors: dict[str, str]) -> str:
             padding: 0 8px;
         }}
         code {{
-            background-color: {c['code_bg']};
+            background-color: {c['inline_code_bg']};
             font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
             padding: 1px 5px;
-            border-radius: 4px;
         }}
         p {{ margin: 6px 0; }}
         h1, h2, h3, h4, h5, h6 {{ margin: 14px 0 8px 0; }}
@@ -152,18 +155,34 @@ def markdown_content_stylesheet(colors: dict[str, str]) -> str:
 # highlighted with Pygments before the rest of the text is converted to HTML
 # and handed to QTextBrowser.setHtml() — the only way to get colour-coded
 # tokens and a GitHub/ChatGPT-style code card (language label, its own
-# rounded panel) into a QTextDocument.
-
-_CODE_CSS_CLASS = "code-hl"
+# panel) into a QTextDocument.
+#
+# Two Qt rich-text quirks shape how that card is built:
+# - CSS "padding" is silently ignored on plain blocks (<p>, <div>) — only a
+#   real table cell's cellpadding gets laid out — so the label and the code
+#   are each their own single-cell <table>, not a <p>/<div>.
+# - A <pre> (or any block) containing literal newlines is split into one
+#   QTextBlock per line, so per-block background/border painted a separate
+#   little box per source line. <br/> line breaks inside one table cell
+#   (kept readable via white-space:pre) stay a single block instead.
+#
+# Pygments ships a "nord" style matching the app's own Nord theme, used
+# unconditionally (not just in the app's own dark mode): its token colours
+# are tuned for Nord's own dark Polar Night background, and several — plain
+# identifiers and punctuation among them — sit almost exactly on top of the
+# app's light-theme background (both are the same pale Nord "Snow Storm"
+# family), rendering as invisible text. Rather than fork a separate light
+# palette, the code card keeps a fixed Nord-dark panel in both app themes —
+# also a common, deliberate choice in other editors/chat UIs.
+_PYGMENTS_STYLE = "nord"
+_CODE_PANEL_BG = QColor(NORD["n00"]).darker(130).name()
+_CODE_LABEL_BG = NORD["n1"]
+_CODE_BORDER = NORD["n3"]
+_CODE_FG = NORD["n4"]
+_LABEL_CELLPADDING = 6
+_BODY_CELLPADDING = 12
 _CODE_TOKEN = "\x00KORTALKCODEBLOCK{}\x00"
 _FENCE_RE = re.compile(r"^```([^\n`]*)\n(.*?)\n```[ \t]*$", re.MULTILINE | re.DOTALL)
-
-
-def pygments_style_name(dark: bool) -> str:
-    """Pygments ships a Nord style for dark mode; light mode has no official
-    Nord counterpart, so a similarly clean, low-contrast light style stands
-    in rather than a jarring high-contrast default."""
-    return "nord" if dark else "friendly"
 
 
 def _lexer_for(language: str, code: str):
@@ -178,29 +197,28 @@ def _lexer_for(language: str, code: str):
         return TextLexer()
 
 
-def _highlighted_block(language: str, code: str, dark: bool) -> str:
+def _highlighted_block(language: str, code: str) -> str:
     lexer = _lexer_for(language, code)
-    body = highlight(code, lexer, HtmlFormatter(nowrap=True, style=pygments_style_name(dark)))
-    # Qt's rich-text HTML importer splits a <pre> at every literal newline
-    # into its own QTextBlock, so any per-block CSS (background, radius,
-    # padding) on it painted a separate little rounded pill per source
-    # line rather than one card. <br/> line breaks inside a single <p>
-    # (with white-space:pre to keep indentation) stay one QTextBlock —
-    # the block-level styling below then applies exactly once.
-    body = body.rstrip("\n").replace("\n", "<br />")
+    formatted = highlight(code, lexer, HtmlFormatter(nowrap=True, style=_PYGMENTS_STYLE))
+    body = formatted.rstrip("\n").replace("\n", "<br />")
     label = language or (lexer.aliases[0] if lexer.aliases else "text")
-    header = f'<div class="code-lang">{html.escape(label)}</div>'
-    return f'<div class="{_CODE_CSS_CLASS}">{header}<p class="code-body">{body}</p></div>'
+    return (
+        f'<table class="code-lang-t" cellspacing="0" cellpadding="{_LABEL_CELLPADDING}" '
+        f'border="0" width="100%"><tr><td class="code-lang">'
+        f'{html.escape(label)}</td></tr></table>'
+        f'<table class="code-body-t" cellspacing="0" cellpadding="{_BODY_CELLPADDING}" '
+        f'border="0" width="100%"><tr><td class="code-body">{body}</td></tr></table>'
+    )
 
 
-def render_answer_html(markdown_text: str, dark: bool) -> str:
+def render_answer_html(markdown_text: str) -> str:
     """Converts a full AI answer (Markdown) to HTML, syntax-highlighting any
     fenced code blocks. Used only for the complete, final render — chunks
     are still streamed in as plain text while a response is arriving."""
     blocks: list[str] = []
 
     def _stash(match: re.Match) -> str:
-        blocks.append(_highlighted_block(match.group(1).strip(), match.group(2), dark))
+        blocks.append(_highlighted_block(match.group(1).strip(), match.group(2)))
         return _CODE_TOKEN.format(len(blocks) - 1)
 
     stashed = _FENCE_RE.sub(_stash, markdown_text)
@@ -211,55 +229,38 @@ def render_answer_html(markdown_text: str, dark: bool) -> str:
     return rendered
 
 
-def pygments_stylesheet(colors: dict[str, str], dark: bool) -> str:
-    """CSS for the highlighted code cards: Pygments' own token-colour rules,
-    plus a card look (recessed background, rounded corners, a small language
-    label) so code reads as clearly set apart from prose.
-
-    Qt's rich-text engine doesn't paint a `<div>` wrapper's own background/
-    border — only real blocks (`<p>`, `<pre>`) get painted — so the card look
-    is built from the label and the code paragraph themselves (top-rounded
-    label, bottom-rounded code, touching borders) rather than from the
-    wrapping div. The code itself is a single `<p class="code-body">` with
-    `<br/>` line breaks (see _highlighted_block) rather than a `<pre>` with
-    literal newlines — Qt splits the latter into one QTextBlock per line,
-    which turned this same background/radius into a separate little pill
-    per line instead of one card."""
-    c = colors
-    cls = _CODE_CSS_CLASS
-    token_css = HtmlFormatter(style=pygments_style_name(dark)).get_style_defs(f".{cls}")
+def pygments_stylesheet() -> str:
+    """CSS for the highlighted code cards: Pygments' Nord token colours on a
+    fixed Nord-dark panel (see the comment above), plus a small language
+    label above the code so it reads as clearly set apart from prose. Qt's
+    rich text has no concept of rounded corners at all (checked: none of
+    QTextBlockFormat, QTextFrameFormat or QTextTableFormat expose one), so
+    the label and code read as one card via a plain shared border and
+    touching edges instead."""
+    token_css = HtmlFormatter(style=_PYGMENTS_STYLE).get_style_defs(".code-body")
     return f"""
         {token_css}
-        .{cls} .code-lang {{
-            color: {c['muted']};
-            background-color: {c['code_bg']};
+        .code-lang-t {{ margin: 12px 0 0 0; border: 1px solid {_CODE_BORDER}; }}
+        .code-body-t {{ margin: 0 0 12px 0; border: 1px solid {_CODE_BORDER}; }}
+        .code-lang {{
+            color: {_CODE_FG};
+            background-color: {_CODE_LABEL_BG};
             font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
             font-size: 11px;
-            padding: 4px 12px;
-            margin: 12px 0 0 0;
-            border: 1px solid {c['border']};
-            border-bottom: none;
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
         }}
-        .{cls} .code-body {{
+        .code-body {{
             white-space: pre;
-            background-color: {c['code_block_bg']};
+            color: {_CODE_FG};
+            background-color: {_CODE_PANEL_BG};
             font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
-            margin: 0 0 12px 0;
-            padding: 10px 14px;
-            border: 1px solid {c['border']};
-            border-top: none;
-            border-bottom-left-radius: 8px;
-            border-bottom-right-radius: 8px;
         }}
     """
 
 
-def response_stylesheet(colors: dict[str, str], dark: bool) -> str:
+def response_stylesheet(colors: dict[str, str]) -> str:
     """Combined stylesheet for every response view (popup, dialog): base
     Markdown spacing plus syntax-highlighted code cards."""
-    return markdown_content_stylesheet(colors) + pygments_stylesheet(colors, dark)
+    return markdown_content_stylesheet(colors) + pygments_stylesheet()
 
 
 def scrollbar_stylesheet(colors: dict[str, str]) -> str:

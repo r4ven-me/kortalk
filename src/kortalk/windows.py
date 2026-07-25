@@ -232,8 +232,7 @@ class _StreamingBrowser(QTextBrowser):
     # -- internals ------------------------------------------------------------
 
     def _set_content(self, markdown_text: str) -> None:
-        dark = theme.is_dark(QGuiApplication.instance())
-        self.setHtml(theme.render_answer_html(markdown_text, dark))
+        self.setHtml(theme.render_answer_html(markdown_text))
 
     def _stop_animations(self) -> None:
         self._thinking_timer.stop()
@@ -418,8 +417,7 @@ class PopupWindow(QWidget):
 
         self.browser = _StreamingBrowser(self.card)
         self.browser.document().setDocumentMargin(0)
-        self.browser.document().setDefaultStyleSheet(
-            theme.response_stylesheet(colors, theme.is_dark(app)))
+        self.browser.document().setDefaultStyleSheet(theme.response_stylesheet(colors))
         self.browser.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.browser)
 
@@ -837,10 +835,8 @@ class MainWindow(QMainWindow):
         self._apply_code_style()
 
     def _apply_code_style(self) -> None:
-        app = QGuiApplication.instance()
-        colors = theme.card_colors(app)
-        self.chat_browser.document().setDefaultStyleSheet(
-            theme.response_stylesheet(colors, theme.is_dark(app)))
+        colors = theme.card_colors(QGuiApplication.instance())
+        self.chat_browser.document().setDefaultStyleSheet(theme.response_stylesheet(colors))
 
     def reload_providers(self) -> None:
         self.provider_combo.blockSignals(True)
