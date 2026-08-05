@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
+import signal
 import subprocess
 import urllib.error
 import urllib.request
@@ -57,6 +59,28 @@ _ACTIVE_WORKERS: set[AIWorker] = set()
 
 _CLI_SPEAKER = {"user": "Human", "assistant": "Assistant"}
 
+# Claude Code CLI tool groups toggled from the UI (see AIWorker.web_search /
+# .local_commands). Checked empirically: in print mode Bash/Edit/Write run
+# unprompted by default (no flag needed to allow them), while WebSearch/
+# WebFetch are denied by default and need an explicit --allowedTools.
+_WEB_SEARCH_TOOLS = ("WebSearch", "WebFetch")
+_LOCAL_COMMAND_TOOLS = ("Bash", "Edit", "Write")
+
+
+def _tool_permission_args(web_search: bool, local_commands: bool) -> list[str]:
+    allowed = list(_WEB_SEARCH_TOOLS) if web_search else []
+    disallowed = [] if web_search else list(_WEB_SEARCH_TOOLS)
+    if local_commands:
+        allowed += _LOCAL_COMMAND_TOOLS
+    else:
+        disallowed += _LOCAL_COMMAND_TOOLS
+    args = []
+    if allowed:
+        args.append(f"--allowedTools={','.join(allowed)}")
+    if disallowed:
+        args.append(f"--disallowedTools={','.join(disallowed)}")
+    return args
+
 
 def _flatten_messages(messages: list[dict]) -> str:
     """The CLI is invoked fresh for every request and has no memory of its
@@ -88,12 +112,17 @@ class AIWorker(QThread):
     failed = Signal(str)         # human-readable error
 
     def __init__(self, provider: Provider, messages: list[dict], timeout: int,
-                 max_tokens: int = 64000):
+                 max_tokens: int = 64000, web_search: bool = True,
+                 local_commands: bool = False):
         super().__init__()  # no Qt parent, see _ACTIVE_WORKERS
         self.provider = provider
         self.messages = messages
         self.timeout = timeout
         self.max_tokens = max_tokens
+        # Claude Code CLI only (see _run_claude_cli) — ignored by the other
+        # provider types, which don't do tool use at all yet.
+        self.web_search = web_search
+        self.local_commands = local_commands
         self._cancelled = False
         self._process: subprocess.Popen | None = None
         self._stream = None  # active network stream (anthropic MessageStream / HTTPResponse)
@@ -112,8 +141,14 @@ class AIWorker(QThread):
         self._cancelled = True
         if self._process is not None:
             try:
-                self._process.kill()
-            except OSError:
+                # The whole process GROUP, not just the tracked PID: `claude`
+                # is a Node.js-based CLI and may have spawned children of its
+                # own — killing only the direct child can leave one alive
+                # holding the stdout/stderr pipes open, so communicate() in
+                # _run_claude_cli() never sees EOF and "Stop" hangs instead
+                # of interrupting a still-thinking request.
+                os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
+            except (ProcessLookupError, OSError):
                 pass
         stream = self._stream
         if stream is not None:
@@ -155,15 +190,26 @@ class AIWorker(QThread):
         cmd = [claude_bin, "-p", _flatten_messages(self.messages)]
         if self.provider.model:
             cmd += ["--model", self.provider.model]
+        cmd += _tool_permission_args(self.web_search, self.local_commands)
         cmd += self.provider.extra_args
 
         self._process = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            # A new process group (for stop()'s killpg, below) — but not a
+            # new *session*: start_new_session=True also detaches from the
+            # controlling terminal, which is one setsid() too many here and
+            # apparently was breaking claude's own tool use (web search and
+            # the like) — it likely relies on terminal/session detection to
+            # decide what it's allowed to run non-interactively.
+            preexec_fn=os.setpgrp,
         )
         try:
             stdout, stderr = self._process.communicate(timeout=self.timeout)
         except subprocess.TimeoutExpired:
-            self._process.kill()
+            try:
+                os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
             self.failed.emit(tr("claude did not respond within {timeout} s.")
                              .format(timeout=self.timeout))
             return

@@ -1,7 +1,7 @@
 """Dialog-mode session persistence.
 
 Deliberately minimal: each dialog-mode conversation is one row in a small
-SQLite file under the user's cache directory — a title (derived from the
+SQLite file under the user's data directory — a title (derived from the
 first message), the full message history as JSON, and a timestamp used to
 order the session list newest-first. No manual rename, no folders or tags:
 just enough to keep several conversations around and switch between them.
@@ -11,16 +11,34 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "kortalk"
-DB_FILE = CACHE_DIR / "session.sqlite3"
+DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))) / "kortalk"
+DB_FILE = DATA_DIR / "session.sqlite3"
+
+# Dialog history used to live under XDG_CACHE_HOME, which implies data
+# that's fine to lose (e.g. a cache cleaner) — this isn't, so it moved to
+# the data directory. _migrate_from_cache_dir() carries over an existing
+# database the first time the new location doesn't have one yet.
+_OLD_CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "kortalk"
+_OLD_DB_FILE = _OLD_CACHE_DIR / "session.sqlite3"
 
 _TITLE_MAX = 40
+
+
+def _migrate_from_cache_dir() -> None:
+    if DB_FILE.exists() or not _OLD_DB_FILE.exists():
+        return
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(_OLD_DB_FILE), str(DB_FILE))
+    except OSError:
+        pass
 
 
 @dataclass
@@ -31,7 +49,8 @@ class SessionMeta:
 
 
 def _connect() -> sqlite3.Connection:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    _migrate_from_cache_dir()
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_FILE)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS dialog_sessions ("

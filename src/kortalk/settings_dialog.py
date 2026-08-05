@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QKeySequenceEdit,
     QLabel,
+    QLayout,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -30,7 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import theme
+from . import __author__, __description__, __homepage__, __license__, __version__, theme
 from .config import Config, Prompt, Provider
 from .i18n import tr
 from .providers import check_provider
@@ -77,10 +78,20 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._build_general_tab(), tr("General"))
         tabs.addTab(self._build_prompts_tab(), tr("Prompts"))
         tabs.addTab(self._build_providers_tab(), tr("Providers"))
+        tabs.addTab(_build_about_widget(), tr("About"))
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
+        # The system icon theme (often chosen for a dark desktop) supplies
+        # these regardless of the app's own light/dark theme choice, so a
+        # light-on-light or dark-on-dark mismatch is common — every other
+        # button in the app is text-only, so drop these too rather than
+        # chase a theme-matched icon.
+        for role in (QDialogButtonBox.StandardButton.Save, QDialogButtonBox.StandardButton.Cancel):
+            button = buttons.button(role)
+            if button is not None:
+                button.setIcon(QIcon())
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
 
@@ -131,6 +142,21 @@ class SettingsDialog(QDialog):
         font_row.addWidget(self.font_size)
         form.addRow(tr("Font:"), font_row)
 
+        code_font_row = QHBoxLayout()
+        self.code_font_combo = QFontComboBox()
+        self.code_font_combo.setFontFilters(QFontComboBox.FontFilter.MonospacedFonts)
+        code_family = str(self.config.get("code_font_family"))
+        self.code_font_default = QCheckBox(tr("built-in default"))
+        self.code_font_default.setChecked(not code_family)
+        if code_family:
+            self.code_font_combo.setCurrentText(code_family)
+        self.code_font_combo.setEnabled(bool(code_family))
+        self.code_font_default.toggled.connect(
+            lambda on: self.code_font_combo.setEnabled(not on))
+        code_font_row.addWidget(self.code_font_default)
+        code_font_row.addWidget(self.code_font_combo, 1)
+        form.addRow(tr("Code font:"), code_font_row)
+
         self.popup_width = QSpinBox()
         self.popup_width.setRange(300, 1200)
         self.popup_width.setValue(int(self.config.get("popup_width")))
@@ -141,8 +167,21 @@ class SettingsDialog(QDialog):
         self.popup_max_height.setValue(int(self.config.get("popup_max_height")))
         form.addRow(tr("Popup max height, px:"), self.popup_max_height)
 
+        self.max_content_width = QSpinBox()
+        self.max_content_width.setRange(0, 2000)
+        self.max_content_width.setSingleStep(50)
+        self.max_content_width.setSpecialValueText(tr("full width"))
+        self.max_content_width.setValue(int(self.config.get("max_content_width")))
+        self.max_content_width.setToolTip(tr(
+            "Caps and centers text/code in responses, like Obsidian's "
+            "readable line length, instead of stretching edge to edge "
+            "in a wide window."))
+        form.addRow(tr("Max response width, px:"), self.max_content_width)
+
         self.timeout = QSpinBox()
-        self.timeout.setRange(10, 1200)
+        # 1h ceiling — tool-use turns (Bash, web search) can run well past
+        # the old 20-minute cap.
+        self.timeout.setRange(10, 3600)
         self.timeout.setValue(int(self.config.get("timeout")))
         form.addRow(tr("Request timeout, s:"), self.timeout)
 
@@ -155,6 +194,13 @@ class SettingsDialog(QDialog):
         self.autostart = QCheckBox(tr("Start at login"))
         self.autostart.setChecked(AUTOSTART_FILE.exists())
         form.addRow("", self.autostart)
+
+        self.popup_web_search = QCheckBox(tr("Web search in popup"))
+        self.popup_web_search.setChecked(bool(self.config.get("claude_web_search")))
+        self.popup_web_search.setToolTip(
+            tr("Claude Code CLI only — has no effect on other providers. "
+               "The dialog window has its own toggle for this in its toolbar."))
+        form.addRow("", self.popup_web_search)
 
         settings_path = tr("Settings file: {path}").format(path=self.config.file_path())
         form.addRow("", QLabel(f"<i>{settings_path}</i>"))
@@ -485,10 +531,16 @@ class SettingsDialog(QDialog):
             "" if self.font_default.isChecked() else self.font_combo.currentText(),
         )
         self.config.set("font_size", self.font_size.value())
+        self.config.set(
+            "code_font_family",
+            "" if self.code_font_default.isChecked() else self.code_font_combo.currentText(),
+        )
         self.config.set("popup_width", self.popup_width.value())
         self.config.set("popup_max_height", self.popup_max_height.value())
+        self.config.set("max_content_width", self.max_content_width.value())
         self.config.set("timeout", self.timeout.value())
         self.config.set("max_tokens", self.max_tokens.value())
+        self.config.set("claude_web_search", self.popup_web_search.isChecked())
 
         prompts = [
             self.prompt_list.item(i).data(Qt.ItemDataRole.UserRole)
@@ -527,3 +579,97 @@ class SettingsDialog(QDialog):
 
         self.saved.emit()
         self.accept()
+
+
+def _build_about_widget() -> QWidget:
+    """Icon, name, version, description/author/license/homepage (from
+    pyproject.toml's [project] table, via importlib.metadata — see
+    kortalk/__init__.py) — shared between the standalone About dialog
+    (tray menu) and Settings → About, so the two can't drift apart."""
+    widget = QWidget()
+    layout = QVBoxLayout(widget)
+    layout.setContentsMargins(28, 24, 28, 20)
+    layout.setSpacing(6)
+
+    icon_label = QLabel()
+    # Fixed size + scaledContents rather than relying on the label's own
+    # sizeHint to match the pixmap: in a tight layout (this widget's own
+    # size can end up constrained, e.g. inside a fixed-size About dialog)
+    # a QLabel clips a pixmap larger than its allotted space instead of
+    # scaling it down, which cropped the icon down to a corner of itself.
+    icon_label.setPixmap(theme.make_tray_icon().pixmap(64, 64))
+    icon_label.setFixedSize(64, 64)
+    icon_label.setScaledContents(True)
+    layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignHCenter)
+
+    title = QLabel("Kortalk")
+    title.setStyleSheet("font-size: 18px; font-weight: 600;")
+    title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+    layout.addWidget(title)
+
+    version_label = QLabel(tr("Version {version}").format(version=__version__))
+    version_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+    layout.addWidget(version_label)
+
+    if __description__:
+        layout.addSpacing(6)
+        desc = QLabel(__description__)
+        desc.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+    facts = [
+        (tr("Author:"), __author__),
+        (tr("License:"), __license__),
+    ]
+    if any(value for _, value in facts):
+        layout.addSpacing(6)
+        for label_text, value in facts:
+            if not value:
+                continue
+            row = QLabel(f"{label_text} {value}")
+            row.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            layout.addWidget(row)
+
+    if __homepage__:
+        link = QLabel(f'<a href="{__homepage__}">{__homepage__}</a>')
+        link.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        link.setOpenExternalLinks(True)
+        link.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        link.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(link)
+
+    layout.addStretch(1)
+    return widget
+
+
+class AboutDialog(QDialog):
+    """Small "About" box: raven icon, app name, version, description,
+    author, license and homepage link — reached from the tray menu
+    (App.open_about) and mirrored in Settings → About."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("About Kortalk"))
+        theme.apply_window_theme(self)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(_build_about_widget())
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(28, 0, 28, 20)
+        btn_row.addStretch(1)
+        close_btn = QPushButton(tr("Close"))
+        close_btn.setObjectName("primaryButton")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+
+        # Sizes the window to fit its content exactly, once, and prevents
+        # resizing — simpler and less fragile than guessing a fixed pixel
+        # size up front, which either clipped a longer description/author
+        # or left excess blank space for a shorter one.
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)

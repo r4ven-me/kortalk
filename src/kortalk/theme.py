@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import markdown as _markdown
@@ -12,8 +13,8 @@ from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import TextLexer, get_lexer_by_name, guess_lexer
 from pygments.util import ClassNotFound
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap, QPolygon
 from PySide6.QtSvg import QSvgRenderer
 
 # https://www.nordtheme.com/docs/colors-and-palettes
@@ -107,12 +108,23 @@ def card_colors(app) -> dict[str, str]:
         # a code block should read as recessed — darker than the page in
         # dark mode, not the lighter shade that works for a hovered button.
         "code_block_bg": QColor(NORD["n00"]).darker(130).name() if dark else NORD["n4"],
-        # Inline `code` chips need their own shade: code_bg equals field_bg
-        # (the QTextBrowser's own background) in dark mode, which made
-        # inline code invisible — n2 is a step lighter than both.
-        "inline_code_bg": NORD["n2"] if dark else NORD["n5"],
+        # Inline `code` chips need their own shade, clearly darker than
+        # content_bg (below) — they sit right on top of it, and a previous,
+        # lighter factor here (125) actually came out *lighter* than
+        # content_bg once that was itself lightened, making chips nearly
+        # invisible. Not as dark as code_block_bg either, so it still
+        # reads as a lighter-weight chip rather than a full code panel.
+        # In light mode it must also differ from content_bg (also n5,
+        # below) for the same reason — n4 matches code_block_bg's tier.
+        "inline_code_bg": QColor(NORD["n1"]).darker(175).name() if dark else NORD["n4"],
         "highlight": NORD["n10"],
         "highlight_text": NORD["n6"],
+        # The readable-width column's own background: lighter than
+        # CODE_PANEL_BG (the code block's own, fixed-dark panel) so the two
+        # don't blend together, but still a touch darker than field_bg (the
+        # strip either side of it) so the response still reads as its own
+        # surface within that panel.
+        "content_bg": QColor(NORD["n00"]).lighter(120).name() if dark else NORD["n5"],
     }
 
 
@@ -140,6 +152,14 @@ def markdown_content_stylesheet(colors: dict[str, str]) -> str:
             font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
             padding: 1px 5px;
         }}
+        /* line-height, not just margin: an inline `code` chip's background
+        paints edge-to-edge on every wrapped line but the last (a Qt rich-
+        text limitation — confirmed even for a plain <span>, no link, no
+        padding involved), which read as one solid merged block when lines
+        sat flush against each other. Extra line spacing puts a visible gap
+        between those bars instead, so a wrapped chip reads as separate
+        highlighted line segments rather than a smear. */
+        p, li {{ line-height: 145%; }}
         p {{ margin: 6px 0; }}
         h1, h2, h3, h4, h5, h6 {{ margin: 14px 0 8px 0; }}
         ul, ol {{ margin: 6px 0; }}
@@ -150,21 +170,17 @@ def markdown_content_stylesheet(colors: dict[str, str]) -> str:
 
 # -- syntax-highlighted code blocks -----------------------------------------
 #
-# Qt's own Markdown-to-richtext converter (QTextDocument.setMarkdown) has no
-# concept of syntax highlighting, so fenced code blocks are pulled out and
-# highlighted with Pygments before the rest of the text is converted to HTML
-# and handed to QTextBrowser.setHtml() — the only way to get colour-coded
-# tokens and a GitHub/ChatGPT-style code card (language label, its own
-# panel) into a QTextDocument.
-#
-# Two Qt rich-text quirks shape how that card is built:
-# - CSS "padding" is silently ignored on plain blocks (<p>, <div>) — only a
-#   real table cell's cellpadding gets laid out — so the label and the code
-#   are each their own single-cell <table>, not a <p>/<div>.
-# - A <pre> (or any block) containing literal newlines is split into one
-#   QTextBlock per line, so per-block background/border painted a separate
-#   little box per source line. <br/> line breaks inside one table cell
-#   (kept readable via white-space:pre) stay a single block instead.
+# Qt's rich-text engine has no concept of syntax highlighting, so fenced
+# code blocks are pulled out and highlighted with Pygments. Each becomes its
+# own real widget (see windows.py's _CodeBlockWidget) rather than an HTML
+# table embedded in the shared conversation document: a wide, unwrappable
+# line (a long shell command, most often) otherwise forced the *entire*
+# document — and from there the window itself — wider to fit it, since a
+# table cell's width is a hint Qt happily grows past, not a hard cap. Only a
+# real QScrollArea can legitimately stay narrower than its content and show
+# a scrollbar instead, right under the block, the way most web chat UIs do
+# it — and Qt's rich text has no equivalent notion of an independently
+# scrollable region.
 #
 # Pygments ships a "nord" style matching the app's own Nord theme, used
 # unconditionally (not just in the app's own dark mode): its token colours
@@ -175,14 +191,60 @@ def markdown_content_stylesheet(colors: dict[str, str]) -> str:
 # palette, the code card keeps a fixed Nord-dark panel in both app themes —
 # also a common, deliberate choice in other editors/chat UIs.
 _PYGMENTS_STYLE = "nord"
-_CODE_PANEL_BG = QColor(NORD["n00"]).darker(130).name()
-_CODE_LABEL_BG = NORD["n1"]
-_CODE_BORDER = NORD["n3"]
-_CODE_FG = NORD["n4"]
-_LABEL_CELLPADDING = 6
-_BODY_CELLPADDING = 12
-_CODE_TOKEN = "\x00KORTALKCODEBLOCK{}\x00"
+CODE_PANEL_BG = QColor(NORD["n00"]).darker(130).name()
+CODE_LABEL_BG = NORD["n1"]
+# A visibly distinct shade for the Copy control specifically — otherwise
+# it's just bold text sitting on the same flat bar as the language label,
+# which read as a label itself rather than a clickable button.
+CODE_COPY_BG = NORD["n2"]
+CODE_BORDER = NORD["n3"]
+CODE_FG = NORD["n4"]
+# Indent guides use the same hue as CODE_BORDER (the gutter's own divider
+# line), faded — they used to be visually identical, which read as the
+# guide being just another structural divider rather than a subtler,
+# secondary hint the way indent guides read in most editors.
+_code_guide = QColor(CODE_BORDER)
+_code_guide.setAlpha(110)
+CODE_GUIDE_COLOR = _code_guide.name(QColor.NameFormat.HexArgb)
+# Fallback stack used whenever the user hasn't chosen a specific monospace
+# font (Settings → General → "Code font") — also appended after their pick,
+# so a font that turns out to be unavailable just degrades to this instead
+# of Qt's generic (often serif) font-family fallback.
+CODE_FONT_FAMILY = "'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace"
+CODE_LABEL_PADDING = 2
+CODE_BODY_PADDING = 12
+# Padding for the readable-width-capped text/code column itself (see
+# windows.py's _StreamingBrowser._wrap_capped) — a real QWidget layout
+# margin there, not table cellpadding.
+CONTENT_PADDING = 16
 _FENCE_RE = re.compile(r"^```([^\n`]*)\n(.*?)\n```[ \t]*$", re.MULTILINE | re.DOTALL)
+
+# scheme for the per-block "Copy" link — _StreamingBrowser.anchorClicked
+# intercepts it instead of letting QTextBrowser try to navigate to it
+COPY_LINK_SCHEME = "kortalk-copy"
+
+_MARKDOWN_SPECIAL_RE = re.compile(r'([\\`*_{}\[\]()#+.!<>|~-])')
+# A line's own leading run of spaces/tabs, or any run of 2+ spaces further
+# in — single inter-word spaces are left alone (nothing to preserve there).
+_WHITESPACE_RUN_RE = re.compile(r"(?m)(^[ \t]+)|( {2,})")
+
+
+def _keep_whitespace_run(match: re.Match) -> str:
+    run = match.group(1) or match.group(2)
+    return "&nbsp;" * len(run.expandtabs(4))
+
+
+def escape_user_text(text: str) -> str:
+    """Prepares raw user-typed/pasted text for the transcript so it renders
+    exactly as it was typed/pasted, rather than as Markdown:
+
+    - Markdown's special characters are backslash-escaped — otherwise an
+      identifier's underscores, or a "-"/"#" starting a line, get read as
+      emphasis, a list, or a heading.
+    - Indentation and multi-space alignment (pasted JSON/YAML/logs) are
+      turned into non-breaking spaces — plain HTML text collapses repeated
+      whitespace to a single space, which otherwise flattened them away."""
+    return _MARKDOWN_SPECIAL_RE.sub(r"\\\1", _WHITESPACE_RUN_RE.sub(_keep_whitespace_run, text))
 
 
 def _lexer_for(language: str, code: str):
@@ -197,70 +259,143 @@ def _lexer_for(language: str, code: str):
         return TextLexer()
 
 
-def _highlighted_block(language: str, code: str) -> str:
+@dataclass
+class ProseBlock:
+    html: str
+
+
+@dataclass
+class CodeBlock:
+    label: str
+    source: str
+    highlighted_html: str  # pygments spans, "<br />"-joined lines — no <pre>/table wrapper
+
+
+_INLINE_CODE_RE = re.compile(r"<code>(.*?)</code>", re.DOTALL)
+
+
+def effective_code_font(configured: str) -> str:
+    """Combines the user's chosen monospace font (Settings → General →
+    "Code font") with the built-in fallback stack, so a font that turns out
+    to be unavailable (or left unset) just degrades to CODE_FONT_FAMILY
+    instead of Qt's generic (often serif) default."""
+    return f"'{configured}', {CODE_FONT_FAMILY}" if configured else CODE_FONT_FAMILY
+
+
+def _wrap_inline_code(
+    html_fragment: str, sources: list[str], colors: dict[str, str], code_font: str
+) -> str:
+    """Wraps every inline `code` span in a click-to-copy link (skipped for a
+    <pre><code> block from 4-space-indented code, recognisable by an actual
+    newline in its content — that's a multi-line block, not a short inline
+    chip, and isn't meant to act like a fenced code block's Copy button).
+
+    The chip's own background/padding/font are repeated here as an inline
+    `style=` attribute on the `<a>` rather than left to the `code {...}`
+    stylesheet rule that already styles every *other* inline `code` span:
+    checked empirically — Qt's rich text engine silently drops a
+    stylesheet's `background-color` (both a `code { }` element rule and an
+    `a.inline-code { }` class rule) on a `<code>` nested inside an `<a>`,
+    rendering it as a bare underlined link with no chip at all. A literal
+    `style=` attribute on the anchor is the only form that actually paints."""
+    style = (
+        f"background-color:{colors['inline_code_bg']}; padding:1px 5px; "
+        f"font-family:{code_font}; text-decoration:none; color:{colors['fg']};"
+    )
+
+    def _sub(match: re.Match) -> str:
+        raw = html.unescape(match.group(1))
+        if "\n" in raw:
+            return match.group(0)
+        index = len(sources)
+        sources.append(raw)
+        return (f'<a href="{COPY_LINK_SCHEME}:{index}" style="{style}">'
+                f'{html.escape(raw)}</a>')
+    return _INLINE_CODE_RE.sub(_sub, html_fragment)
+
+
+def _render_prose(
+    markdown_text: str, inline_code_sources: list[str], colors: dict[str, str], code_font: str
+) -> str:
+    # nl2br: a single typed/pasted newline is otherwise left as a bare "\n"
+    # in the HTML output, which any renderer (Qt included) collapses to a
+    # space rather than a line break — nl2br turns it into a real <br/>.
+    rendered = _markdown.markdown(markdown_text, extensions=["extra", "sane_lists", "nl2br"])
+    return _wrap_inline_code(rendered, inline_code_sources, colors, code_font)
+
+
+def _highlighted_code(language: str, code: str) -> CodeBlock:
     lexer = _lexer_for(language, code)
     formatted = highlight(code, lexer, HtmlFormatter(nowrap=True, style=_PYGMENTS_STYLE))
     body = formatted.rstrip("\n").replace("\n", "<br />")
     label = language or (lexer.aliases[0] if lexer.aliases else "text")
-    return (
-        f'<table class="code-lang-t" cellspacing="0" cellpadding="{_LABEL_CELLPADDING}" '
-        f'border="0" width="100%"><tr><td class="code-lang">'
-        f'{html.escape(label)}</td></tr></table>'
-        f'<table class="code-body-t" cellspacing="0" cellpadding="{_BODY_CELLPADDING}" '
-        f'border="0" width="100%"><tr><td class="code-body">{body}</td></tr></table>'
-    )
+    return CodeBlock(label=label, source=code, highlighted_html=body)
 
 
-def render_answer_html(markdown_text: str) -> str:
-    """Converts a full AI answer (Markdown) to HTML, syntax-highlighting any
-    fenced code blocks. Used only for the complete, final render — chunks
-    are still streamed in as plain text while a response is arriving."""
-    blocks: list[str] = []
+def split_markdown_blocks(
+    markdown_text: str,
+    colors: dict[str, str],
+    code_font: str = CODE_FONT_FAMILY,
+) -> tuple[list[ProseBlock | CodeBlock], list[str]]:
+    """Splits a full AI answer (Markdown) into an ordered list of prose and
+    fenced-code blocks. Used only for the complete, final render — chunks
+    are still streamed in as plain text while a response is arriving.
 
-    def _stash(match: re.Match) -> str:
-        blocks.append(_highlighted_block(match.group(1).strip(), match.group(2)))
-        return _CODE_TOKEN.format(len(blocks) - 1)
+    Each block becomes its own widget (see windows.py's _CodeBlockWidget)
+    instead of one shared QTextDocument: a fenced code block with an
+    unwrappable long line otherwise forced the *entire* document — and from
+    there the window itself — wider to fit it, since Qt's rich-text tables
+    have no notion of an independently scrollable region; a `width="N"`
+    table cell is a hint, not a hard cap, so unwrappable content just grows
+    the cell past it. Giving code its own real, horizontally scrollable
+    strip (positioned right under it, like most web chat UIs) needs it to
+    be a real QWidget with a real QScrollArea, not an HTML table cell.
 
-    stashed = _FENCE_RE.sub(_stash, markdown_text)
-    rendered = _markdown.markdown(stashed, extensions=["extra", "sane_lists"])
-    for i, block_html in enumerate(blocks):
-        token = _CODE_TOKEN.format(i)
-        rendered = rendered.replace(f"<p>{token}</p>", block_html).replace(token, block_html)
-    return rendered
+    `colors` (theme.card_colors()) styles inline `code` copy-links — see
+    _wrap_inline_code for why that can't be left to the stylesheet.
+    `code_font` (see effective_code_font) styles those same chips — fenced
+    code blocks apply it separately, in windows.py's _CodeBlockWidget.
+
+    Also returns the raw source behind every inline `code` copy-link (see
+    COPY_LINK_SCHEME / _wrap_inline_code), indexed to match."""
+    blocks: list[ProseBlock | CodeBlock] = []
+    inline_code_sources: list[str] = []
+    pos = 0
+    for m in _FENCE_RE.finditer(markdown_text):
+        prose = markdown_text[pos:m.start()]
+        if prose.strip():
+            blocks.append(ProseBlock(_render_prose(prose, inline_code_sources, colors, code_font)))
+        blocks.append(_highlighted_code(m.group(1).strip(), m.group(2)))
+        pos = m.end()
+    tail = markdown_text[pos:]
+    if tail.strip() or not blocks:
+        blocks.append(ProseBlock(_render_prose(tail, inline_code_sources, colors, code_font)))
+    return blocks, inline_code_sources
 
 
-def pygments_stylesheet() -> str:
-    """CSS for the highlighted code cards: Pygments' Nord token colours on a
-    fixed Nord-dark panel (see the comment above), plus a small language
-    label above the code so it reads as clearly set apart from prose. Qt's
-    rich text has no concept of rounded corners at all (checked: none of
-    QTextBlockFormat, QTextFrameFormat or QTextTableFormat expose one), so
-    the label and code read as one card via a plain shared border and
-    touching edges instead."""
+def pygments_stylesheet(font_family: str = CODE_FONT_FAMILY) -> str:
+    """CSS for the syntax-highlighted token colours inside a code block's
+    body widget (see windows.py's _CodeBlockWidget, which owns the
+    label/Copy header and the block's card chrome as real QWidget styling —
+    this only has to cover Pygments' own `<span class="...">` token classes,
+    scoped under .code-body so they don't leak into ordinary inline `code`
+    chips elsewhere in the response)."""
     token_css = HtmlFormatter(style=_PYGMENTS_STYLE).get_style_defs(".code-body")
     return f"""
         {token_css}
-        .code-lang-t {{ margin: 12px 0 0 0; border: 1px solid {_CODE_BORDER}; }}
-        .code-body-t {{ margin: 0 0 12px 0; border: 1px solid {_CODE_BORDER}; }}
-        .code-lang {{
-            color: {_CODE_FG};
-            background-color: {_CODE_LABEL_BG};
-            font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
-            font-size: 11px;
-        }}
         .code-body {{
             white-space: pre;
-            color: {_CODE_FG};
-            background-color: {_CODE_PANEL_BG};
-            font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
+            color: {CODE_FG};
+            background-color: {CODE_PANEL_BG};
+            font-family: {font_family};
         }}
     """
 
 
-def response_stylesheet(colors: dict[str, str]) -> str:
+def response_stylesheet(colors: dict[str, str], code_font: str = CODE_FONT_FAMILY) -> str:
     """Combined stylesheet for every response view (popup, dialog): base
     Markdown spacing plus syntax-highlighted code cards."""
-    return markdown_content_stylesheet(colors) + pygments_stylesheet()
+    return markdown_content_stylesheet(colors) + pygments_stylesheet(code_font)
 
 
 def scrollbar_stylesheet(colors: dict[str, str]) -> str:
@@ -295,6 +430,39 @@ def scrollbar_stylesheet(colors: dict[str, str]) -> str:
     """
 
 
+# Qt's stylesheet engine renders a QSpinBox's up/down glyphs as a plain
+# filled rectangle when their border colours are set to fake a triangle via
+# CSS's usual "transparent sides" trick (checked: no border mitering is
+# applied at all) — the shape has to come from a real image instead. A
+# `data:` URI in `image: url(...)` is silently dropped too (checked: no
+# error, just no image); only an actual file path renders, hence generating
+# these once to a small cache directory rather than embedding them inline.
+_SPIN_ARROW_DIR = (
+    Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "kortalk"
+)
+
+
+def _spin_arrow_path(up: bool, color: str) -> Path:
+    path = _SPIN_ARROW_DIR / f"spin-{'up' if up else 'down'}-{color.lstrip('#')}.png"
+    if not path.exists():
+        pixmap = QPixmap(10, 6)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(color))
+        triangle = (QPolygon([QPoint(1, 5), QPoint(9, 5), QPoint(5, 1)]) if up
+                    else QPolygon([QPoint(1, 1), QPoint(9, 1), QPoint(5, 5)]))
+        painter.drawPolygon(triangle)
+        painter.end()
+        try:
+            _SPIN_ARROW_DIR.mkdir(parents=True, exist_ok=True)
+            pixmap.save(str(path), "PNG")
+        except OSError:
+            pass
+    return path
+
+
 def window_stylesheet(colors: dict[str, str]) -> str:
     """Chrome shared by the settings dialog and the main window: same flat
     background and field colours as the popup card, applied regardless of
@@ -304,6 +472,10 @@ def window_stylesheet(colors: dict[str, str]) -> str:
     disabled state — Fusion's defaults are too subtle to read as "this
     reacted to you", which is the point of styling them here at all."""
     c = colors
+    up_arrow = _spin_arrow_path(True, c["fg"])
+    down_arrow = _spin_arrow_path(False, c["fg"])
+    up_arrow_muted = _spin_arrow_path(True, c["muted"])
+    down_arrow_muted = _spin_arrow_path(False, c["muted"])
     return f"""
         QDialog, QMainWindow {{ background-color: {c['bg']}; }}
         QWidget {{ color: {c['fg']}; }}
@@ -330,6 +502,16 @@ def window_stylesheet(colors: dict[str, str]) -> str:
         }}
         QToolBar {{ padding: 4px 6px; }}
 
+        /* QApplication.setPalette()'s ToolTipBase/ToolTipText roles aren't
+        picked up here — QToolTip keeps its own separate, OS-default
+        palette unless styled explicitly, which read as a random mismatched
+        colour (e.g. pale system tooltip yellow/white) against this theme —
+        shown by the code block / inline-code "Copied" tooltip. */
+        QToolTip {{
+            background-color: {c['field_bg']}; color: {c['fg']};
+            border: 1px solid {c['border']}; padding: 4px 8px;
+        }}
+
         QLineEdit, QPlainTextEdit, QTextBrowser, QComboBox, QSpinBox,
         QListWidget, QFontComboBox {{
             background-color: {c['field_bg']};
@@ -345,6 +527,7 @@ def window_stylesheet(colors: dict[str, str]) -> str:
         QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus {{
             border: 1px solid {c['highlight']};
         }}
+        QComboBox {{ padding: 4px 8px; }}
         QComboBox::drop-down {{ border: none; width: 22px; }}
         QComboBox QAbstractItemView {{
             background-color: {c['field_bg']}; color: {c['fg']};
@@ -353,6 +536,29 @@ def window_stylesheet(colors: dict[str, str]) -> str:
             selection-color: {c['highlight_text']};
             outline: none;
         }}
+
+        QSpinBox {{ padding-right: 2px; }}
+        QSpinBox::up-button, QSpinBox::down-button {{
+            background-color: {c['code_bg']};
+            border: none;
+            border-left: 1px solid {c['border']};
+            width: 18px;
+        }}
+        QSpinBox::up-button {{ border-top-right-radius: 6px; }}
+        QSpinBox::down-button {{ border-bottom-right-radius: 6px; }}
+        QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+            background-color: {c['highlight']};
+        }}
+        QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {{
+            background-color: {c['muted']};
+        }}
+        QSpinBox::up-button:disabled, QSpinBox::down-button:disabled {{
+            background-color: {c['field_bg']};
+        }}
+        QSpinBox::up-arrow {{ image: url({up_arrow}); width: 10px; height: 6px; }}
+        QSpinBox::down-arrow {{ image: url({down_arrow}); width: 10px; height: 6px; }}
+        QSpinBox::up-arrow:disabled {{ image: url({up_arrow_muted}); }}
+        QSpinBox::down-arrow:disabled {{ image: url({down_arrow_muted}); }}
 
         QListWidget::item {{ padding: 4px 6px; border-radius: 4px; }}
         QListWidget::item:hover {{ background-color: {c['code_bg']}; }}

@@ -21,7 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QTimer
+from PySide6.QtCore import QByteArray, Qt, QTimer
 from PySide6.QtGui import QAction, QClipboard, QGuiApplication
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
@@ -31,7 +31,7 @@ from .config import Config
 from .hotkeys import GlobalHotkeys
 from .i18n import tr
 from .providers import shutdown_workers
-from .settings_dialog import SettingsDialog
+from .settings_dialog import AboutDialog, SettingsDialog
 from .windows import MainWindow, PopupWindow
 
 SOCKET_NAME = f"kortalk-{getpass.getuser()}"
@@ -314,6 +314,7 @@ class KortalkApp:
         self.menu.addAction(tr("Open window"), lambda: self.handle({"action": "window"}))
         self.menu.addSeparator()
         self.menu.addAction(tr("Settings"), self.open_settings)
+        self.menu.addAction(tr("About"), self.open_about)
         self.menu.addSeparator()
         self.menu.addAction(tr("Quit"), self.quit)
         self._update_tooltip()
@@ -417,17 +418,21 @@ class KortalkApp:
             self.popup = None
 
     def open_window(self, command: dict) -> None:
-        _provider, full_prompt, selection = self._resolve(command)
-        window = self._ensure_main_window()
-        if selection or command.get("prompt"):
-            window.set_input(full_prompt)
-        window.show()
-        window.raise_()
-        window.activateWindow()
+        self._show_main_window(self._ensure_main_window())
 
     def _popup_to_window(self, prompt: str, answer: str) -> None:
         window = self._ensure_main_window()
         window.seed_dialog_from_popup(prompt, answer)
+        self._show_main_window(window)
+
+    def _show_main_window(self, window: MainWindow) -> None:
+        # show()/raise_()/activateWindow() alone often just flashed the
+        # taskbar entry instead of actually restoring the window when it was
+        # minimized — most window managers ignore a background process's
+        # focus request unless the window is first taken out of the
+        # minimized state.
+        if window.isMinimized():
+            window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMinimized)
         window.show()
         window.raise_()
         window.activateWindow()
@@ -449,6 +454,9 @@ class KortalkApp:
             lambda _r: setattr(self, "settings_dialog", None)
         )
         self.settings_dialog.show()
+
+    def open_about(self) -> None:
+        AboutDialog().exec()
 
     def _settings_saved(self) -> None:
         i18n.set_language(str(self.config.get("language")))

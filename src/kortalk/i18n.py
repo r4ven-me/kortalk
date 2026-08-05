@@ -32,13 +32,21 @@ RU: dict[str, str] = {
     "Popup with prompt": "Popup с промптом",
     "Open window": "Открыть окно",
     "Settings": "Настройки",
+    "About": "О программе",
     "Quit": "Выход",
     "Hotkeys unavailable: {error}": "Хоткеи недоступны: {error}",
+    # -- about ------------------------------------------------------------------
+    "About Kortalk": "О программе Kortalk",
+    "Version {version}": "Версия {version}",
+    "Author:": "Автор:",
+    "License:": "Лицензия:",
+    "Close": "Закрыть",
     # -- windows --------------------------------------------------------------
     "Thinking": "Думаю",
     "*(empty response)*": "*(пустой ответ)*",
     "Error": "Ошибка",
     "Copy": "Копировать",
+    "Copied": "Скопировано",
     "Stop": "Стоп",
     "Stopped": "Остановлено",
     "Open in window": "В окно",
@@ -48,6 +56,18 @@ RU: dict[str, str] = {
     "Done": "Готово",
     "Requesting {name}…": "Запрос к {name}…",
     "Provider not found — check settings": "Провайдер не найден — проверьте настройки",
+    "Web search": "Веб-поиск",
+    "Run commands": "Выполнение команд",
+    "Claude Code CLI only — has no effect on other providers":
+        "Только для Claude Code CLI — на других провайдерах не действует",
+    "Allows Bash and file edits — Claude Code CLI only, off by default":
+        "Разрешает Bash и редактирование файлов — только для Claude Code CLI, "
+        "по умолчанию выключено",
+    "Web search in popup": "Веб-поиск в popup",
+    "Claude Code CLI only — has no effect on other providers. "
+    "The dialog window has its own toggle for this in its toolbar.":
+        "Только для Claude Code CLI — на других провайдерах не действует. "
+        "У окна диалога есть свой переключатель для этого на панели инструментов.",
     # -- dialog mode ------------------------------------------------------------
     "Dialog": "Диалог",
     "Dialog — context is kept between messages": "Диалог — контекст сохраняется между сообщениями",
@@ -77,8 +97,17 @@ RU: dict[str, str] = {
     "auto": "авто",
     "size:": "размер:",
     "Font:": "Шрифт:",
+    "Code font:": "Шрифт кода:",
+    "built-in default": "по умолчанию",
     "Popup width, px:": "Ширина popup, px:",
     "Popup max height, px:": "Макс. высота popup, px:",
+    "full width": "во всю ширину",
+    "Max response width, px:": "Макс. ширина ответа, px:",
+    "Caps and centers text/code in responses, like Obsidian's "
+    "readable line length, instead of stretching edge to edge "
+    "in a wide window.":
+        "Ограничивает и центрирует текст/код в ответах, как «удобная длина "
+        "строки» в Obsidian, вместо растягивания на всю ширину окна.",
     "Request timeout, s:": "Таймаут запроса, сек:",
     "Max response tokens:": "Макс. токенов ответа:",
     "Start at login": "Запускать при входе в систему",

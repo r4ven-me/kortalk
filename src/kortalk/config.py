@@ -17,6 +17,7 @@ GENERAL_DEFAULTS = {
     "theme": "system",          # system | nord-dark | nord-light
     "font_family": "",          # "" = system font
     "font_size": 0,             # 0 = system size
+    "code_font_family": "",     # "" = built-in monospace fallback stack
     "popup_width": 560,
     "popup_max_height": 600,
     "window_width": 960,
@@ -25,6 +26,16 @@ GENERAL_DEFAULTS = {
     "max_tokens": 64000,        # response token limit (Anthropic API)
     "active_provider": "claude-cli",
     "active_prompt": "Explain",
+    # Claude Code CLI tool permissions — Bash/Edit/Write run unprompted by
+    # default in print mode unless denied, while WebSearch/WebFetch need
+    # explicit allow; these two toggles build --allowedTools/--disallowedTools
+    # accordingly (see AIWorker._run_claude_cli). No effect on other providers.
+    "claude_web_search": True,
+    "claude_local_commands": False,
+    # Obsidian-style "readable line length": prose/code in response views is
+    # capped at this width and centered, rather than stretching edge to edge
+    # in a wide window. 0 = full width.
+    "max_content_width": 700,
 }
 
 HOTKEY_DEFAULTS = {
