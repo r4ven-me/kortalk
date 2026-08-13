@@ -81,9 +81,25 @@ RU: dict[str, str] = {
     "Message… (Ctrl+Enter to send)": "Сообщение… (Ctrl+Enter — отправить)",
     "You": "Вы",
     "Assistant": "Ассистент",
-    "Dialog mode — context is kept between messages.":
-        "Режим диалога — контекст сохраняется между сообщениями.",
+    "Kar-kar…": "Кар-кар…",
     "New dialog started": "Начат новый диалог",
+    "Quick questions": "Быстрые вопросы",
+    "Quick questions — context is not kept between messages":
+        "Быстрые вопросы — контекст не сохраняется между сообщениями",
+    "Not saved between restarts — cleared when kortalk quits.":
+        "Не сохраняется между перезапусками — очищается при выходе из kortalk.",
+    "Clear quick questions": "Очистить быстрые вопросы",
+    "Clear this session's history? This cannot be undone.":
+        "Очистить историю этой сессии? Это действие нельзя отменить.",
+    "Quick questions cleared": "История быстрых вопросов очищена",
+    # -- attachments ------------------------------------------------------------
+    "{name}: not a file": "{name}: это не файл",
+    "{name}: {error}": "{name}: {error}",
+    "{name}: too large (max {max} MB)": "{name}: слишком большой (макс. {max} МБ)",
+    "\n\n… (truncated)": "\n\n… (обрезано)",
+    "{name}: unsupported file type": "{name}: неподдерживаемый тип файла",
+    "Attach files": "Прикрепить файлы",
+    "Click to preview": "Нажмите для просмотра",
     # -- settings: general ----------------------------------------------------
     "Settings — Kortalk": "Настройки — Kortalk",
     "General": "Общие",

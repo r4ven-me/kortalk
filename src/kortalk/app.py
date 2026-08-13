@@ -270,6 +270,12 @@ class KortalkApp:
         app.setWindowIcon(theme.make_tray_icon())
 
         self.server = QLocalServer()
+        # Qt's default socket permissions (WorldAccessOption) let any local
+        # user connect and send commands (open a popup with an arbitrary
+        # prompt through the victim's configured provider/API key, force
+        # --quit, ...) — the socket name is already per-user
+        # (SOCKET_NAME), so restrict the socket file itself to match.
+        self.server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         QLocalServer.removeServer(SOCKET_NAME)  # clean up the socket after a crash
         self.server.listen(SOCKET_NAME)
         self.server.newConnection.connect(self._on_connection)

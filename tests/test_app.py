@@ -1,8 +1,10 @@
 """Tests for app.py: the desktop launcher entry and tray-click handling."""
 
+import os
 import subprocess
 from types import SimpleNamespace
 
+from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import QSystemTrayIcon
 
 from kortalk.app import KortalkApp, augment_path_from_login_shell, ensure_desktop_entry
@@ -117,6 +119,26 @@ def test_augment_path_survives_a_broken_shell(monkeypatch):
 
     import os
     assert os.environ["PATH"] == "/usr/bin:/bin"
+
+
+def test_local_ipc_socket_is_restricted_to_the_current_user(qapp, config, monkeypatch):
+    # Qt's default socket permissions let any local user connect and send
+    # commands (open a popup with an arbitrary prompt through the victim's
+    # configured provider, --quit, ...) — regression guard for the
+    # UserAccessOption fix in KortalkApp.__init__.
+    import kortalk.app as app_mod
+
+    test_socket_name = "kortalk-test-ipc-permissions"
+    monkeypatch.setattr(app_mod, "SOCKET_NAME", test_socket_name)
+    QLocalServer.removeServer(test_socket_name)
+
+    kortalk = KortalkApp(qapp, config)
+    try:
+        path = kortalk.server.fullServerName()
+        mode = os.stat(path).st_mode
+        assert mode & 0o077 == 0, "group/other must have no access to the IPC socket"
+    finally:
+        kortalk.quit()
 
 
 class _FakeWindow:

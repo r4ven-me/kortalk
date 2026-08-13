@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import base64
+from dataclasses import asdict
 from datetime import datetime
+from pathlib import Path
 
 import shiboken6
 from PySide6.QtCore import (
     QEasingCurve,
     QEvent,
     QLineF,
+    QMimeData,
     QPoint,
     QPropertyAnimation,
     QRectF,
+    QSize,
     Qt,
     QTimer,
     Signal,
@@ -23,10 +28,12 @@ from PySide6.QtGui import (
     QCursor,
     QDesktopServices,
     QGuiApplication,
+    QImage,
     QKeySequence,
     QPainter,
     QPainterPath,
     QPalette,
+    QPixmap,
     QRegion,
     QShortcut,
     QTextCharFormat,
@@ -35,6 +42,8 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -56,7 +65,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import session, theme
+from . import attachments, session, theme
 from .config import Config
 from .i18n import tr
 from .providers import AIWorker
@@ -220,6 +229,24 @@ class _ProseBrowser(QTextBrowser):
         if self.height() != height:
             self.setFixedHeight(height)
             self.heightChanged.emit()
+
+    def viewportEvent(self, event) -> bool:
+        # Same fix as _CodeScrollArea/_GutterBrowser, for the same reason:
+        # a QTextBrowser is itself a QAbstractScrollArea and accepts a
+        # vertical wheel event by default even with both scrollbars off and
+        # nothing of its own to scroll — which silently swallowed the
+        # conversation's own scrolling wherever the cursor happened to be
+        # over a paragraph rather than a code block or the empty margin
+        # around them, making mouse-wheel scrolling feel like it randomly
+        # stopped working right at a text/code boundary. Ignoring it here
+        # instead lets it propagate to the enclosing conversation
+        # QScrollArea, same as everywhere else in the transcript.
+        if event.type() == QEvent.Type.Wheel:
+            delta = event.angleDelta()
+            if abs(delta.y()) > abs(delta.x()):
+                event.ignore()
+                return False
+        return super().viewportEvent(event)
 
 
 class _CodeScrollArea(QScrollArea):
@@ -583,6 +610,7 @@ class _StreamingBrowser(QWidget):
     conversation visible while the newest answer streams in below them."""
 
     contentChanged = Signal()  # natural (unconstrained) height may have changed
+    attachmentClicked = Signal(str)  # ATTACHMENT_LINK_SCHEME link clicked; carries its key
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -659,6 +687,36 @@ class _StreamingBrowser(QWidget):
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.setSpacing(0)
         scroll_content_layout.addWidget(self._content)
+
+        # The empty-dialog placeholder (see reset()'s bare=): unlike a
+        # committed block, it isn't a capped, top-pinned card — it's meant
+        # to fill the *entire* panel (Expanding, both directions, so it
+        # takes all the space self._content isn't using) and center its
+        # icon/text within that, reading as an empty-state illustration
+        # rather than a message. Built once here and just shown/hidden by
+        # _set_empty_state, not torn down and rebuilt like committed blocks.
+        self._empty_state = QWidget()
+        self._empty_state.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        empty_layout = QVBoxLayout(self._empty_state)
+        empty_layout.addStretch(1)
+        self._empty_icon = QLabel()
+        self._empty_icon.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        empty_layout.addWidget(self._empty_icon)
+        self._empty_text = QLabel(tr("Kar-kar…"))
+        self._empty_text.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        empty_layout.addWidget(self._empty_text)
+        empty_layout.addStretch(1)
+        self._empty_state.setVisible(False)
+        # A big stretch factor, not the implied one from its Expanding size
+        # policy alone: box layouts split *surplus* space by explicit
+        # stretch factor first — the trailing addStretch(1) right below,
+        # with its own explicit factor of 1, otherwise claimed all of it
+        # ahead of this widget's policy-implied (but factor-0) claim,
+        # leaving the icon/text sized to their own minimum and stuck near
+        # the top instead of centered in the panel.
+        scroll_content_layout.addWidget(self._empty_state, 1000)
+
         scroll_content_layout.addStretch(1)
         self._scroll.setWidget(scroll_content)
 
@@ -693,16 +751,25 @@ class _StreamingBrowser(QWidget):
         # The strip either side of the readable-width column: same shade as
         # the session list panel (field_bg — QListWidget is styled with it
         # in window_stylesheet), so this view reads as its own panel rather
-        # than bare page background. Only on _content (sized to its actual
-        # rows — see the scroll_content wrapper in __init__), not on
-        # _scroll itself, which always fills its full allotted space
-        # regardless of how short the conversation is — painting it there
-        # too meant a short conversation still showed a big blank field_bg
-        # panel below it, reachable by scrolling into nothing. Below
-        # _content now, the plain window background shows through instead,
-        # same as any ordinary empty space.
-        self._scroll.setStyleSheet("background: transparent; border: none;")
-        self._content.setStyleSheet(f"background-color: {colors['field_bg']};")
+        # than bare page background. On _scroll itself, not _content: a
+        # short conversation should still read as a *full*, complete panel
+        # (matching the session list next to it) rather than looking cut
+        # off partway down — but _scroll's own background paints its full
+        # allotted rect regardless of its scrollable content's height,
+        # while the scrollable *range* is still governed entirely by
+        # scroll_content/_content's actual (natural, unstretched — see
+        # __init__) size. Unlike an earlier version that painted this
+        # same colour on _content directly: that widget WAS the scrolled
+        # widget then (widgetResizable(True) on _scroll stretched it to
+        # fill the viewport), so its background was reachable by actually
+        # scrolling into empty space. It no longer is, so repainting the
+        # backdrop here is safe again.
+        self._scroll.setStyleSheet(f"background-color: {colors['field_bg']}; border: none;")
+        self._content.setStyleSheet("background: transparent;")
+        self._empty_state.setStyleSheet(f"background-color: {colors['field_bg']};")
+        self._empty_icon.setPixmap(theme.make_tray_icon(colors["muted"]).pixmap(64, 64))
+        self._empty_text.setStyleSheet(
+            f"color: {colors['muted']}; font-style: italic; font-size: 15px;")
         self._rewrap_live()
         self._rebuild_blocks(self._committed_markdown)
 
@@ -732,6 +799,7 @@ class _StreamingBrowser(QWidget):
         self._live_row.setVisible(was_visible)
 
     def begin_stream(self, placeholder: str, prefix: str = "") -> None:
+        self._set_empty_state(False)
         self._prefix = prefix
         self._buffer = ""
         self._cursor_shown = False
@@ -783,15 +851,25 @@ class _StreamingBrowser(QWidget):
         self._stop_animations()
         self._render_final(f"**{tr('Error')}**\n\n{message}")
 
-    def reset(self, placeholder: str = "") -> None:
+    def reset(self, placeholder: str = "", *, bare: bool = False) -> None:
         """Clears any streamed content and prefix — used to start a fresh
-        dialog without the leftover transcript of the previous one."""
+        dialog without the leftover transcript of the previous one.
+
+        `bare`: shows the empty-dialog illustration (raven + "Kar-kar…",
+        see _set_empty_state) instead of rendering `placeholder` as an
+        ordinary message — a card just repeating "Dialog mode…" under a
+        toolbar label already saying almost the same thing read as a
+        redundant, oddly-isolated panel rather than an actual empty state."""
         self._stop_animations()
         self._prefix = ""
         self._buffer = ""
         self._live.clear()
         self._live_row.setVisible(False)
-        self._rebuild_blocks(placeholder)
+        self._set_empty_state(bare)
+        self._rebuild_blocks("" if bare else placeholder)
+
+    def _set_empty_state(self, active: bool) -> None:
+        self._empty_state.setVisible(active)
 
     def text_content(self) -> str:
         return self._buffer
@@ -975,11 +1053,14 @@ class _StreamingBrowser(QWidget):
         self._scroll.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
     def _on_live_anchor_clicked(self, url) -> None:
-        # The live widget streams plain text only (no inline-code links can
-        # exist in it yet), but a real hyperlink pasted as literal text
-        # could still be auto-detected — keep hand-off consistent with the
-        # committed block widgets.
-        if url.scheme() != theme.COPY_LINK_SCHEME:
+        # The live widget streams plain text only (no inline-code links or
+        # attachment markers can exist in it yet — those only ever appear
+        # in already-committed history), but a real hyperlink pasted as
+        # literal text could still be auto-detected — keep hand-off
+        # consistent with the committed block widgets.
+        if url.scheme() == theme.ATTACHMENT_LINK_SCHEME:
+            self.attachmentClicked.emit(url.path())
+        elif url.scheme() != theme.COPY_LINK_SCHEME:
             QDesktopServices.openUrl(url)
 
     def _on_copy_link(self, url, sources: list[str]) -> None:
@@ -991,6 +1072,11 @@ class _StreamingBrowser(QWidget):
             if 0 <= index < len(sources):
                 _copy_to_clipboard(sources[index])
                 QToolTip.showText(QCursor.pos(), tr("Copied"), self)
+        elif url.scheme() == theme.ATTACHMENT_LINK_SCHEME:
+            # The key (e.g. "3-0") is resolved back to an Attachment by
+            # whoever owns this browser (MainWindow) — this generic widget
+            # has no notion of "attachments" of its own.
+            self.attachmentClicked.emit(url.path())
         else:
             QDesktopServices.openUrl(url)
 
@@ -1032,25 +1118,32 @@ class _StreamingBrowser(QWidget):
         scrollbar = self._scroll.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
-    def _defer_scroll_to_bottom(self, passes: int = 4) -> None:
-        """Re-pins to the bottom over a few event-loop turns, not just one.
+    def _defer_scroll_to_bottom(self, passes: int = 4, _is_first: bool = True) -> None:
+        """Re-pins to the bottom over a few event-loop turns, not just one
+        — but only ever *moves* the scrollbar on the first turn (so
+        following a new answer feels immediate) and the last one (a
+        guaranteed final correction), not on every turn in between.
 
-        A single deferred correction (the previous fix here) covers the
-        common case, but a heavier rebuild — several committed blocks, a
-        code block among them — can settle its *final* layout over more
-        than one turn: measured empirically, the scrollbar's maximum() can
-        land on a transient, inflated value on turn 1, grow slightly more
-        on turn 2, then only drop to its real, smaller final value on turn
-        3. Scrolling to the inflated max in between looks like scrolling
-        past the actual content into blank space until something else
-        (the next "Thinking…" tick, a manual scroll) happens to correct
-        it — this instead keeps re-snapping to the bottom for a few turns
-        so it settles on the real value on its own."""
+        A heavier rebuild — several committed blocks, a code block among
+        them — can settle its *final* layout over more than one turn:
+        measured empirically, the scrollbar's maximum() can land on a
+        transient, inflated value on turn 1, grow slightly more on turn 2,
+        then only drop to its real, smaller final value on turn 3. An
+        earlier version of this method re-snapped to the bottom on *every*
+        turn, i.e. to each of those transient values in sequence — which
+        did eventually converge on the right position, but along the way
+        actually *committed* (setValue, a real repaint) each wrong
+        intermediate value, so the view visibly jumped past the real
+        content and then jerked back on the very next frame. Skipping the
+        middle turns entirely and only committing the first/last reads
+        removes those visible round trips; the final commit still reads
+        whatever settled value the old code eventually converged on."""
         if not shiboken6.isValid(self):
             return
-        self._scroll_to_bottom()
+        if _is_first or passes <= 1:
+            self._scroll_to_bottom()
         if passes > 1:
-            QTimer.singleShot(0, lambda: self._defer_scroll_to_bottom(passes - 1))
+            QTimer.singleShot(0, lambda: self._defer_scroll_to_bottom(passes - 1, False))
 
     def _append_plain(self, text: str) -> None:
         if not text:
@@ -1137,18 +1230,23 @@ class _DraggableCard(QFrame):
 
 
 class PopupWindow(QWidget):
-    """Popup near the cursor: rounded corners, auto-close on an outside
-    click (Qt.Popup) and Escape, selectable Markdown response, draggable
-    by the mouse until it's closed."""
+    """Popup near the cursor: rounded corners, selectable Markdown response,
+    draggable by the mouse, stays on top of every other window until closed
+    with its own ✕ button — losing focus or clicking outside it does
+    nothing, unlike a native Qt.Popup."""
 
     open_in_window = Signal(str, str)  # prompt text, response text -> open in the main window
 
     RADIUS = 12
 
     def __init__(self, config: Config, provider_name: str):
-        # Qt.Popup gives the native "click outside closes" behaviour while
-        # clicks INSIDE (text selection, buttons) keep working.
-        super().__init__(None, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        # Qt.Tool (not Qt.Popup): no taskbar entry, but — unlike Popup —
+        # Qt doesn't auto-close it on an outside click or a focus loss, so
+        # the ✕ button (_animated_close) is the only way to close it.
+        # WindowStaysOnTopHint keeps it above every other window, including
+        # ones that grab focus while the popup is still open.
+        super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
@@ -1227,7 +1325,6 @@ class PopupWindow(QWidget):
         self.browser.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.browser)
 
-        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self._animated_close)
         self._fade_anim: QPropertyAnimation | None = None
 
         self.browser.contentChanged.connect(self._adjust_height)
@@ -1300,10 +1397,8 @@ class PopupWindow(QWidget):
         return anim
 
     def _animated_close(self) -> None:
-        # Escape / the ✕ button get a quick fade instead of an abrupt
-        # disappearance; an outside click still closes instantly (native
-        # Qt.Popup behaviour) since intercepting that path isn't worth
-        # the complexity for a one-off popup.
+        # The ✕ button is the only way to close the popup (see __init__)
+        # — a quick fade instead of an abrupt disappearance.
         anim = self._fade(self.windowOpacity(), 0.0, 110, QEasingCurve.Type.InCubic)
         anim.finished.connect(self.close)
 
@@ -1312,13 +1407,174 @@ class PopupWindow(QWidget):
         super().closeEvent(event)
 
 
+def _elide(text: str, max_len: int) -> str:
+    return text if len(text) <= max_len else text[:max_len - 1] + "…"
+
+
+class _ChatInput(QPlainTextEdit):
+    """Plain-text message composer that also accepts image paste
+    (Ctrl+V) and drag-and-drop of local files. Both go through the same
+    two Qt extension points — canInsertFromMimeData/insertFromMimeData —
+    which QPlainTextEdit's own default drag-and-drop handling already
+    calls into, so no separate dragEnterEvent/dropEvent overrides are
+    needed here. Ordinary text paste/drop/typing is untouched (falls
+    through to the base implementation)."""
+
+    imagePasted = Signal(QImage)
+    filesDropped = Signal(list)  # list[str] of local file paths
+
+    def canInsertFromMimeData(self, source: QMimeData) -> bool:
+        return source.hasImage() or source.hasUrls() or super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source: QMimeData) -> None:
+        if source.hasImage():
+            image = source.imageData()
+            if isinstance(image, QImage) and not image.isNull():
+                self.imagePasted.emit(image)
+                return
+        if source.hasUrls():
+            paths = [u.toLocalFile() for u in source.urls() if u.isLocalFile()]
+            if paths:
+                self.filesDropped.emit(paths)
+                return
+        super().insertFromMimeData(source)
+
+
+class _ImagePreviewDialog(QDialog):
+    """Read-only, full(er)-size image preview — opened by clicking an
+    image chip (before sending) or an attachment link in the transcript
+    (after). A real window, not frameless: its own titlebar/close button
+    plus QDialog's default Escape-closes behaviour are enough for a
+    one-off viewer, no custom chrome needed."""
+
+    def __init__(self, attachment: attachments.Attachment, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(attachment.name)
+        pixmap = QPixmap()
+        pixmap.loadFromData(base64.b64decode(attachment.data))
+
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry().size()
+            max_size = QSize(int(available.width() * 0.85), int(available.height() * 0.85))
+            if pixmap.width() > max_size.width() or pixmap.height() > max_size.height():
+                pixmap = pixmap.scaled(
+                    max_size, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        label = QLabel()
+        label.setPixmap(pixmap)
+        layout.addWidget(label)
+
+
+class _AttachmentChip(QFrame):
+    """One removable attachment preview: a thumbnail (images) or a generic
+    file glyph, the (elided) filename, and a small ✕ button. Clicking an
+    image thumbnail opens it full-size; text files have nothing to open."""
+
+    removeClicked = Signal()
+
+    _SIZE = 40
+
+    def __init__(self, attachment: attachments.Attachment, colors: dict[str, str], parent=None):
+        super().__init__(parent)
+        self._attachment = attachment
+        self.setStyleSheet(
+            f"QFrame {{ background-color: {colors['code_bg']}; "
+            f"border: 1px solid {colors['border']}; border-radius: 6px; }}"
+        )
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 4, 6, 4)
+        layout.setSpacing(6)
+
+        preview = QLabel()
+        preview.setFixedSize(self._SIZE, self._SIZE)
+        preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview.setStyleSheet("background: transparent; border: none;")
+        if attachment.kind == "image":
+            pixmap = QPixmap()
+            pixmap.loadFromData(base64.b64decode(attachment.data))
+            preview.setPixmap(pixmap.scaled(
+                self._SIZE, self._SIZE, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation))
+            preview.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.setToolTip(tr("Click to preview"))
+        else:
+            preview.setText("📄")
+            preview.setStyleSheet(f"font-size: 20px; color: {colors['muted']};")
+        layout.addWidget(preview)
+
+        name = QLabel(_elide(attachment.name, 22))
+        name.setToolTip(attachment.name)
+        name.setStyleSheet(f"color: {colors['fg']}; background: transparent; border: none;")
+        layout.addWidget(name)
+
+        remove_btn = QPushButton("✕")
+        remove_btn.setFixedSize(20, 20)
+        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        remove_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; border: none; color: {colors['muted']}; }}"
+            f"QPushButton:hover {{ color: {colors['fg']}; }}"
+        )
+        remove_btn.clicked.connect(self.removeClicked)
+        layout.addWidget(remove_btn)
+
+    def mousePressEvent(self, event) -> None:
+        # The remove button consumes its own clicks (it's a QPushButton),
+        # so this only ever fires for the rest of the chip.
+        if self._attachment.kind == "image" and event.button() == Qt.MouseButton.LeftButton:
+            _ImagePreviewDialog(self._attachment, self.window()).exec()
+            return
+        super().mousePressEvent(event)
+
+
+class _AttachmentTray(QWidget):
+    """Horizontal strip of removable attachment chips shown above the
+    message input — hidden entirely (takes no layout space) whenever
+    there's nothing pending."""
+
+    removed = Signal(int)  # index into the caller's pending-attachments list
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 8)
+        self._layout.setSpacing(6)
+        self._layout.addStretch(1)
+        self.setVisible(False)
+
+    def set_attachments(self, items: list[attachments.Attachment], colors: dict[str, str]) -> None:
+        while self._layout.count() > 1:
+            widget = self._layout.takeAt(0).widget()
+            if widget is not None:
+                widget.deleteLater()
+        for i, att in enumerate(items):
+            chip = _AttachmentChip(att, colors)
+            chip.removeClicked.connect(lambda _checked=False, idx=i: self.removed.emit(idx))
+            self._layout.insertWidget(self._layout.count() - 1, chip)
+        self.setVisible(bool(items))
+
+
 _USER_LABEL = "🧑"
 _ASSISTANT_LABEL = "🤖"
+
+# A fixed, non-database session slot for quick one-off questions: pinned at
+# the top of the session list like any other dialog, but its history lives
+# only in MainWindow.quick_history (never written to session.sqlite3, so it
+# starts empty again every time kortalk restarts) and each message is sent
+# to the provider on its own, without the rest of the session as context —
+# see send_chat(). Negative so it can never collide with a real session's
+# autoincrement id (starts at 1).
+_QUICK_SESSION_ID = -1
 
 
 class MainWindow(QMainWindow):
     """Full window: a session list next to a single conversation thread that
-    keeps full context (every earlier turn is resent to the provider)."""
+    keeps full context (every earlier turn is resent to the provider) —
+    except the pinned "Quick questions" entry (_QUICK_SESSION_ID), which
+    sends each message on its own and is never persisted to disk."""
 
     settings_requested = Signal()
 
@@ -1327,6 +1583,22 @@ class MainWindow(QMainWindow):
         self.config = config
         self.worker: AIWorker | None = None
         self._fade_anim: QPropertyAnimation | None = None
+
+        # In-memory only, see _QUICK_SESSION_ID — cleared whenever this
+        # MainWindow (and so the daemon) is recreated, i.e. on every restart.
+        self.quick_history: list[dict] = []
+
+        # Attachments queued for the *next* message — cleared once it's
+        # sent. See _ChatInput (paste/drop) and send_chat().
+        self._pending_attachments: list[attachments.Attachment] = []
+        self._card_colors: dict[str, str] = {}  # set by _apply_code_style
+        self._tray_height_added = 0  # see _grow_splitter_for_tray/_shrink_splitter_for_tray
+
+        # "message_index-attachment_index" -> raw attachment dict, rebuilt
+        # by _chat_transcript() on every render — resolves a clicked
+        # theme.ATTACHMENT_LINK_SCHEME link back to its image. Ephemeral
+        # UI-only state, never persisted.
+        self._attachment_by_key: dict[str, dict] = {}
 
         # Pick up the most recently active dialog, if any — the session
         # list (built below) lets the user switch to a different one.
@@ -1428,12 +1700,15 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(10, 12, 8, 10)
         layout.setSpacing(8)
-        layout.addWidget(QLabel(tr("Dialog — context is kept between messages")))
+        self.dialog_label = QLabel()
+        layout.addWidget(self.dialog_label)
 
         # A vertical splitter (not a fixed-height input box) lets the user
         # drag the divider up when a message needs more room to compose.
-        chat_splitter = QSplitter(Qt.Orientation.Vertical)
-        chat_splitter.setHandleWidth(4)
+        # Kept as self.chat_splitter (not a local var): _refresh_attachment_
+        # tray() resizes it when the tray appears/disappears, see there.
+        self.chat_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.chat_splitter.setHandleWidth(4)
 
         # chat_browser and the input row are wrapped in their own containers
         # (rather than added to the splitter directly) purely to get a
@@ -1443,6 +1718,7 @@ class MainWindow(QMainWindow):
         browser_layout = QVBoxLayout(browser_container)
         browser_layout.setContentsMargins(0, 0, 0, 8)
         self.chat_browser = _StreamingBrowser()
+        self.chat_browser.attachmentClicked.connect(self._on_attachment_link_clicked)
         # Applied before the first render: set_colors() doesn't
         # retroactively restyle content a document already has, so calling
         # this after _refresh_chat_view() left the initial history unstyled
@@ -1451,26 +1727,52 @@ class MainWindow(QMainWindow):
         self._apply_code_style()
         self._refresh_chat_view()
         browser_layout.addWidget(self.chat_browser)
-        chat_splitter.addWidget(browser_container)
+        self.chat_splitter.addWidget(browser_container)
 
         input_widget = QWidget()
-        input_row = QHBoxLayout(input_widget)
-        input_row.setContentsMargins(0, 8, 0, 0)
-        self.chat_input = QPlainTextEdit()
+        input_outer = QVBoxLayout(input_widget)
+        input_outer.setContentsMargins(0, 8, 0, 0)
+        input_outer.setSpacing(0)
+
+        self.attachment_tray = _AttachmentTray()
+        self.attachment_tray.removed.connect(self._remove_attachment)
+        input_outer.addWidget(self.attachment_tray)
+
+        input_row = QHBoxLayout()
+        # Default QHBoxLayout spacing is 0 when it isn't parented to a
+        # widget at construction (as here) — without this, the buttons on
+        # either side sit flush against chat_input with no breathing room.
+        input_row.setSpacing(8)
+        self.attach_btn = QPushButton("📎")
+        # Same treatment as the API-key show/hide button in Settings: the
+        # base QPushButton rule's padding (5px 14px, sized for text labels)
+        # otherwise fights a single emoji glyph — #iconButton's tighter
+        # padding (theme.window_stylesheet) is the established fix.
+        self.attach_btn.setObjectName("iconButton")
+        self.attach_btn.setToolTip(tr("Attach files"))
+        self.attach_btn.setFixedWidth(40)
+        self.attach_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.attach_btn.clicked.connect(self._open_file_dialog)
+        input_row.addWidget(self.attach_btn)
+        self.chat_input = _ChatInput()
         self.chat_input.setPlaceholderText(tr("Message… (Ctrl+Enter to send)"))
         self.chat_input.setMinimumHeight(40)
+        self.chat_input.imagePasted.connect(self._on_image_pasted)
+        self.chat_input.filesDropped.connect(self._on_files_dropped)
         input_row.addWidget(self.chat_input, 1)
         self.chat_send_btn = QPushButton(tr("Send (Ctrl+Enter)"))
         self.chat_send_btn.setObjectName("primaryButton")
         self.chat_send_btn.clicked.connect(self._chat_send_or_stop)
         input_row.addWidget(self.chat_send_btn)
-        chat_splitter.addWidget(input_widget)
+        input_outer.addLayout(input_row)
 
-        chat_splitter.setStretchFactor(0, 1)
-        chat_splitter.setStretchFactor(1, 0)
-        chat_splitter.setSizes([420, 90])
+        self.chat_splitter.addWidget(input_widget)
 
-        layout.addWidget(chat_splitter, 1)
+        self.chat_splitter.setStretchFactor(0, 1)
+        self.chat_splitter.setStretchFactor(1, 0)
+        self.chat_splitter.setSizes([420, 90])
+
+        layout.addWidget(self.chat_splitter, 1)
         return panel
 
     # -- dialog mode --------------------------------------------------------------
@@ -1491,11 +1793,26 @@ class MainWindow(QMainWindow):
 
     def _chat_transcript(self, pending_answer: bool) -> str:
         turns = []
-        for m in self.chat_history:
+        self._attachment_by_key = {}
+        for m_idx, m in enumerate(self.chat_history):
             if m["role"] == "user":
                 label, content = f"{_USER_LABEL} {tr('You')}", theme.escape_user_text(m["content"])
             else:
                 label, content = f"{_ASSISTANT_LABEL} {tr('Assistant')}", m["content"]
+            for a_idx, att in enumerate(m.get("attachments") or []):
+                # A link (images) or plain marker (files) — never an inline
+                # thumbnail/embed, which would need markdown-image
+                # rendering for local/base64 sources. Clicking an image
+                # link opens _ImagePreviewDialog via _StreamingBrowser's
+                # generic ATTACHMENT_LINK_SCHEME handling — see
+                # _on_attachment_link_clicked.
+                name = theme.escape_user_text(att["name"])
+                if att["kind"] == "image":
+                    key = f"{m_idx}-{a_idx}"
+                    self._attachment_by_key[key] = att
+                    content += f"\n\n[📎 *{name}*]({theme.ATTACHMENT_LINK_SCHEME}:{key})"
+                else:
+                    content += f"\n\n📎 *{name}*"
             turns.append(f"**{label}:**\n\n{content}")
         md = "\n\n---\n\n".join(turns)
         if pending_answer:
@@ -1508,11 +1825,17 @@ class MainWindow(QMainWindow):
         return md
 
     def _refresh_chat_view(self) -> None:
+        self._update_dialog_label()
         if not self.chat_history:
-            self.chat_browser.reset(
-                f"*{tr('Dialog mode — context is kept between messages.')}*")
+            self.chat_browser.reset(bare=True)
         else:
             self.chat_browser.reset(self._chat_transcript(pending_answer=False))
+
+    def _update_dialog_label(self) -> None:
+        text = (tr("Quick questions — context is not kept between messages")
+                if self.session_id == _QUICK_SESSION_ID
+                else tr("Dialog — context is kept between messages"))
+        self.dialog_label.setText(text)
 
     # -- session list ---------------------------------------------------------
 
@@ -1527,7 +1850,23 @@ class MainWindow(QMainWindow):
         self.session_list.blockSignals(True)
         self.session_list.clear()
         selected_row = -1
-        for i, meta in enumerate(session.list_sessions()):
+
+        # Pinned first row, always present, styled distinctly (bold, amber)
+        # so it doesn't get mistaken for a saved dialog — see
+        # _QUICK_SESSION_ID.
+        quick_item = QListWidgetItem("⚡ " + tr("Quick questions"))
+        quick_item.setData(Qt.ItemDataRole.UserRole, _QUICK_SESSION_ID)
+        quick_font = quick_item.font()
+        quick_font.setBold(True)
+        quick_item.setFont(quick_font)
+        quick_item.setForeground(QColor(theme.NORD["n13"]))
+        quick_item.setToolTip(
+            tr("Not saved between restarts — cleared when kortalk quits."))
+        self.session_list.addItem(quick_item)
+        if self.session_id == _QUICK_SESSION_ID:
+            selected_row = 0
+
+        for i, meta in enumerate(session.list_sessions(), start=1):
             item = QListWidgetItem(self._session_label(meta))
             item.setData(Qt.ItemDataRole.UserRole, meta.id)
             self.session_list.addItem(item)
@@ -1546,7 +1885,10 @@ class MainWindow(QMainWindow):
             return
         _stop_worker(self.worker)
         self.session_id = session_id
-        self.chat_history = session.load_session(session_id)
+        self.chat_history = (
+            self.quick_history if session_id == _QUICK_SESSION_ID
+            else session.load_session(session_id)
+        )
         self.chat_input.clear()
         self._set_chat_sending(False)
         self._refresh_chat_view()
@@ -1559,6 +1901,8 @@ class MainWindow(QMainWindow):
         return tr("Dialog")
 
     def _persist_dialog(self) -> None:
+        if self.session_id == _QUICK_SESSION_ID:
+            return  # in-memory only — never written to session.sqlite3
         if self.session_id is None:
             self.session_id = session.create_session(
                 self._derive_session_title(), self.chat_history)
@@ -1569,6 +1913,20 @@ class MainWindow(QMainWindow):
     def _delete_dialog(self) -> None:
         if self.session_id is None:
             return  # an unsaved new dialog — nothing to delete yet
+        if self.session_id == _QUICK_SESSION_ID:
+            confirmed = QMessageBox.question(
+                self, tr("Clear quick questions"),
+                tr("Clear this session's history? This cannot be undone."),
+            ) == QMessageBox.StandardButton.Yes
+            if not confirmed:
+                return
+            _stop_worker(self.worker)
+            self.quick_history.clear()  # self.chat_history is the same list
+            self.chat_input.clear()
+            self._set_chat_sending(False)
+            self._refresh_chat_view()
+            self.statusBar().showMessage(tr("Quick questions cleared"))
+            return
         confirmed = QMessageBox.question(
             self, tr("Delete this dialog"),
             tr("Delete this dialog permanently? This cannot be undone."),
@@ -1598,7 +1956,7 @@ class MainWindow(QMainWindow):
 
     def send_chat(self) -> None:
         text = self.chat_input.toPlainText().strip()
-        if not text:
+        if not text and not self._pending_attachments:
             return
         _stop_worker(self.worker)
 
@@ -1607,7 +1965,12 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("Provider not found — check settings"))
             return
 
-        self.chat_history.append({"role": "user", "content": text})
+        user_message = {"role": "user", "content": text}
+        if self._pending_attachments:
+            user_message["attachments"] = [asdict(a) for a in self._pending_attachments]
+            self._pending_attachments = []
+            self._refresh_attachment_tray()
+        self.chat_history.append(user_message)
         self._persist_dialog()
         self.chat_input.clear()
         self._set_chat_sending(True)
@@ -1615,7 +1978,15 @@ class MainWindow(QMainWindow):
         self.chat_browser.begin_stream(
             tr("Thinking"), prefix=self._chat_transcript(pending_answer=True))
 
-        self.worker = AIWorker(provider, list(self.chat_history), int(self.config.get("timeout")),
+        # Every other session resends the whole conversation as context;
+        # "Quick questions" deliberately doesn't (see _QUICK_SESSION_ID) —
+        # only the message just appended goes to the provider, even though
+        # the transcript above still shows every earlier turn.
+        request_messages = (
+            [self.chat_history[-1]] if self.session_id == _QUICK_SESSION_ID
+            else list(self.chat_history)
+        )
+        self.worker = AIWorker(provider, request_messages, int(self.config.get("timeout")),
                                int(self.config.get("max_tokens")),
                                web_search=self.web_search_check.isChecked(),
                                local_commands=self.local_commands_check.isChecked())
@@ -1677,10 +2048,98 @@ class MainWindow(QMainWindow):
 
     def _apply_code_style(self) -> None:
         colors = theme.card_colors(QGuiApplication.instance())
+        self._card_colors = colors
         self.chat_browser.content_max_width = int(self.config.get("max_content_width"))
         self.chat_browser.content_bg = colors["content_bg"]
         self.chat_browser.code_font_family = str(self.config.get("code_font_family"))
         self.chat_browser.set_colors(colors)
+        if hasattr(self, "attachment_tray"):  # not built yet on the first call
+            self._refresh_attachment_tray()
+
+    # -- attachments ------------------------------------------------------------
+
+    def _on_image_pasted(self, image: QImage) -> None:
+        name = f"pasted-{len(self._pending_attachments) + 1}.png"
+        self._pending_attachments.append(attachments.attachment_from_qimage(image, name))
+        self._refresh_attachment_tray()
+
+    def _on_files_dropped(self, paths: list[str]) -> None:
+        errors = []
+        for raw_path in paths:
+            attachment, error = attachments.classify_and_read(Path(raw_path))
+            if attachment is not None:
+                self._pending_attachments.append(attachment)
+            else:
+                errors.append(error)
+        if errors:
+            self.statusBar().showMessage(" · ".join(errors))
+        self._refresh_attachment_tray()
+
+    def _refresh_attachment_tray(self) -> None:
+        was_hidden = self.attachment_tray.isHidden()
+        self.attachment_tray.set_attachments(self._pending_attachments, self._card_colors)
+        is_hidden = self.attachment_tray.isHidden()
+        # Only ever fires on an actual empty<->non-empty *transition* —
+        # repeated refreshes with the same emptiness (e.g. a theme change
+        # while attachments are pending) must not keep resizing things.
+        if was_hidden and not is_hidden:
+            # Deferred: chips were *just* added above, and sizeHint() only
+            # reports their real height once Qt has actually laid them out
+            # — same reasoning as _StreamingBrowser's own deferred
+            # remeasurements elsewhere in this file.
+            QTimer.singleShot(0, self._grow_splitter_for_tray)
+        elif not was_hidden and is_hidden:
+            self._shrink_splitter_for_tray()
+
+    def _grow_splitter_for_tray(self) -> None:
+        # The tray sits *inside* the input pane's own fixed-size splitter
+        # slot (see _build_conversation_panel) — without this, it simply
+        # eats into chat_input's share of that fixed height instead of the
+        # pane growing, which is exactly the "input box shrinks when you
+        # paste an image" bug this works around. Grows the input pane by
+        # exactly the tray's own height, taken from the browser pane (which
+        # scrolls, so losing a little visible height there is far less
+        # disruptive than the box you're actively typing into shrinking).
+        if not shiboken6.isValid(self.chat_splitter):
+            return
+        sizes = self.chat_splitter.sizes()
+        if len(sizes) < 2:
+            return
+        delta = self.attachment_tray.sizeHint().height()
+        self._tray_height_added = delta
+        sizes[0] -= delta
+        sizes[1] += delta
+        self.chat_splitter.setSizes(sizes)
+
+    def _shrink_splitter_for_tray(self) -> None:
+        # Symmetric with _grow_splitter_for_tray, and uses the exact same
+        # stored amount rather than re-measuring sizeHint() now — the tray
+        # is already empty again by this point, so its *current* sizeHint
+        # no longer reflects the height that was actually added back then.
+        if not self._tray_height_added:
+            return
+        sizes = self.chat_splitter.sizes()
+        if len(sizes) >= 2:
+            sizes[0] += self._tray_height_added
+            sizes[1] -= self._tray_height_added
+            self.chat_splitter.setSizes(sizes)
+        self._tray_height_added = 0
+
+    def _remove_attachment(self, index: int) -> None:
+        if 0 <= index < len(self._pending_attachments):
+            del self._pending_attachments[index]
+            self._refresh_attachment_tray()
+
+    def _open_file_dialog(self) -> None:
+        paths, _filter = QFileDialog.getOpenFileNames(self, tr("Attach files"))
+        if paths:
+            self._on_files_dropped(paths)
+
+    def _on_attachment_link_clicked(self, key: str) -> None:
+        raw = self._attachment_by_key.get(key)
+        if raw is None or raw.get("kind") != "image":
+            return
+        _ImagePreviewDialog(attachments.Attachment(**raw), self).exec()
 
     def reload_providers(self) -> None:
         self.provider_combo.blockSignals(True)

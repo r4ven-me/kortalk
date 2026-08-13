@@ -4,6 +4,76 @@
 
 ### Fixes
 
+- **Selected/pasted text starting with `-` no longer breaks the Claude
+  Code CLI provider.** A YAML document, a CLI flag, anything starting with
+  a dash — claude's own argument parser (Commander.js) reads a leading `-`
+  on the prompt as an attempted option of its own rather than the prompt's
+  value, failing with `error: unknown option '...'` instead of ever
+  reaching the model. The prompt is now always the last argv element,
+  preceded by a literal `--`, which is the standard way to tell an
+  argument parser "everything after this is a literal value, not an
+  option" — so its content can no longer be misread as a flag.
+- **Scrolling the conversation with the mouse wheel no longer randomly
+  stops working over plain text.** A fenced code block's own scroll area
+  already forwarded vertical wheel input to the conversation instead of
+  eating it; every ordinary text paragraph — a `QTextBrowser` in its own
+  right — never got the same fix, so the wheel silently did nothing
+  wherever the cursor happened to be over prose rather than a code block.
+- **The conversation no longer visibly jerks up and down while sending a
+  message or right as a response finishes.** After a full rebuild, each
+  block's real (wrapped) height only becomes known once Qt has actually
+  laid it out, over a few event-loop turns — the auto-scroll-to-bottom
+  logic used to re-snap to the bottom on *every* one of those turns,
+  including the transient, not-yet-final heights along the way, so the
+  view visibly jumped past the real content and then jerked back a frame
+  later. It now only ever moves the scrollbar on the first turn (so
+  following a new answer still feels immediate) and the last one (a
+  guaranteed final correction), never on the turns in between.
+
+### Changes
+
+- **The popup no longer closes on an outside click or losing focus**, and
+  now stays on top of every other window — the only way to close it is
+  its own ✕ button. It previously used Qt's native `Popup` window type,
+  which auto-closes on exactly those triggers; `Escape` closing it is also
+  gone, along with that auto-close behaviour.
+- **Empty dialog state**: a fresh/empty conversation now shows a small
+  raven illustration and "Kar-kar…" instead of an isolated card repeating
+  "Dialog mode…" right under a toolbar label already saying almost the
+  same thing.
+- **New: "Quick questions"** — a pinned entry at the top of the dialog
+  window's session list (bold, amber, always there) for one-off questions
+  that shouldn't accumulate context. Every message you send in it goes to
+  the provider on its own, without earlier turns resent alongside it, even
+  though the visible transcript still keeps them all so you can scroll
+  back. It's never written to `session.sqlite3` — its history lives only
+  in memory and starts empty again on every restart. "Delete" on it clears
+  its history instead of removing the entry.
+- **New: attachments in the dialog window** — paste an image with
+  Ctrl+V, drag and drop images/text files onto the message box, or use the
+  new 📎 button next to it to pick files instead; they show up as
+  removable chips above the box and go to the model with your next
+  message. Clicking an image chip — before sending, or its `📎 name` link
+  in the transcript afterwards — opens it full-size. Large images are
+  downscaled to 1568px on the long edge before sending/storing; text files
+  (code, logs, configs — detected by content, not extension) are inlined
+  into the prompt with a size cap. Works with all three provider types,
+  including Claude Code CLI, which has no native way to take image bytes:
+  images are written to a per-request temp directory and the CLI is run
+  with it as its working directory, so its own Read tool can see them
+  without an interactive approval prompt print mode could never answer.
+  Popup windows don't have a composer, so this is dialog-mode only.
+
+## 1.1.0 — 2026-08-05
+
+Per-version entries lapsed between 0.4.0 and this release (~30 tagged
+versions) — rather than inventing per-version history from commit messages
+that don't carry it, this section summarizes the accumulated user-facing
+changes across that whole span in one place. Releases from here on get a
+normal per-version entry again.
+
+### Fixes
+
 - **Ctrl+C (SIGINT) and SIGTERM now quit the daemon cleanly.** The Qt event
   loop never let the Python signal handler run; a periodic timer now wakes
   the interpreter and the handler shuts the application down.
@@ -35,6 +105,23 @@
 
 ### Changes
 
+- **Dialog mode**: the two-column window keeps a running, multi-turn
+  conversation — every earlier turn is resent as context with the next
+  message, not just the latest one. Conversations persist across restarts
+  (SQLite, `~/.local/share/kortalk/session.sqlite3`), with a session list
+  to create, switch between, and delete dialogs.
+- **Claude Code CLI tool-use controls** — "Web search" and "Run commands"
+  toggles (dialog window toolbar and Settings → General) build the CLI's
+  `--allowedTools`/`--disallowedTools` flags; web search is on by default,
+  running Bash/Edit/Write is off by default and must be opted into.
+- **Readable line length for responses** — text and code in the popup and
+  dialog window are capped and centered at a configurable width
+  (Settings → General → "Max response width"), Obsidian-style, instead of
+  stretching edge to edge in a wide window.
+- **Redesigned fenced code blocks** — a language label, a Copy button, a
+  line-number gutter, indent guides, and their own independent horizontal
+  scrollbar, so an unwrappable long line no longer forces the whole window
+  wider. The code font is now configurable separately from the UI font.
 - **Popup windows can be dragged** — click anywhere on the card that isn't
   a button or the response text and move it; it stays put until you close
   it or press `Escape`.

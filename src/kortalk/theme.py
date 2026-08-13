@@ -159,7 +159,7 @@ def markdown_content_stylesheet(colors: dict[str, str]) -> str:
         sat flush against each other. Extra line spacing puts a visible gap
         between those bars instead, so a wrapped chip reads as separate
         highlighted line segments rather than a smear. */
-        p, li {{ line-height: 145%; }}
+        p, li {{ line-height: 130%; }}
         p {{ margin: 6px 0; }}
         h1, h2, h3, h4, h5, h6 {{ margin: 14px 0 8px 0; }}
         ul, ol {{ margin: 6px 0; }}
@@ -222,6 +222,9 @@ _FENCE_RE = re.compile(r"^```([^\n`]*)\n(.*?)\n```[ \t]*$", re.MULTILINE | re.DO
 # scheme for the per-block "Copy" link — _StreamingBrowser.anchorClicked
 # intercepts it instead of letting QTextBrowser try to navigate to it
 COPY_LINK_SCHEME = "kortalk-copy"
+# same idea, for an image-attachment marker in the transcript — MainWindow
+# turns a click into an in-app preview instead of QDesktopServices.openUrl
+ATTACHMENT_LINK_SCHEME = "kortalk-attachment"
 
 _MARKDOWN_SPECIAL_RE = re.compile(r'([\\`*_{}\[\]()#+.!<>|~-])')
 # A line's own leading run of spaces/tabs, or any run of 2+ spaces further

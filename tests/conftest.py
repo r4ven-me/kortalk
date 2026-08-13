@@ -36,3 +36,18 @@ def _isolate_autostart(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(app_mod, "DESKTOP_FILE", tmp_path / "applications" / "kortalk.desktop")
     monkeypatch.setattr(theme_mod, "ICON_FILE", tmp_path / "icons" / "kortalk.svg")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_session_db(tmp_path, monkeypatch):
+    """Any test that builds a MainWindow touches session.py (the session
+    list is loaded on construction) — must never read/write the real
+    ~/.local/share/kortalk/session.sqlite3."""
+    import kortalk.session as session_mod
+
+    data_dir = tmp_path / "data" / "kortalk"
+    monkeypatch.setattr(session_mod, "DATA_DIR", data_dir)
+    monkeypatch.setattr(session_mod, "DB_FILE", data_dir / "session.sqlite3")
+    monkeypatch.setattr(session_mod, "_OLD_CACHE_DIR", tmp_path / "cache" / "kortalk")
+    monkeypatch.setattr(session_mod, "_OLD_DB_FILE",
+                        tmp_path / "cache" / "kortalk" / "session.sqlite3")

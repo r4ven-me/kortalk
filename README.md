@@ -10,10 +10,15 @@ cursor. Lives in the tray, streams responses, supports multiple providers.
 
 - **Popup near the cursor** — rounded corners, Markdown rendering with
   highlighted code blocks, real-time token streaming, text
-  selection/copying, draggable by the mouse. Closes on an outside click or
-  `Escape`.
+  selection/copying, draggable by the mouse. Stays on top of every other
+  window and only closes via its own ✕ button — losing focus or clicking
+  outside it does nothing.
 - **Two-column window** — editable prompt+text on the left, response on the
-  right, provider selector in the toolbar, `Ctrl+Enter` to send.
+  right, provider selector in the toolbar, `Ctrl+Enter` to send. Paste
+  (`Ctrl+V`), drag and drop, or use the 📎 button to attach images and text
+  files — they show up as removable chips and go to the model with your
+  next message, on every provider including Claude Code CLI; click an
+  image to open it full-size.
 - **Tray** — the application is resident: a monochrome raven icon (Corvus —
   the korvus emblem), left click = open the two-column window, a menu with
   the prompt library, a popup with the selection, settings and quit.

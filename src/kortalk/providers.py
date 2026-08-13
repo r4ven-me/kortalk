@@ -10,17 +10,21 @@ path.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
 import shutil
 import signal
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
+from . import attachments
 from .config import Provider
 from .i18n import tr
 
@@ -90,6 +94,98 @@ def _flatten_messages(messages: list[dict]) -> str:
         return messages[0]["content"]
     turns = (f"{_CLI_SPEAKER.get(m['role'], m['role'])}: {m['content']}" for m in messages)
     return "\n\n".join(turns) + "\n\nAssistant:"
+
+
+def _resolve_claude_cli_attachments(messages: list[dict]) -> tuple[list[dict], Path | None]:
+    """Returns amended messages (attachments folded into `content`, never
+    passed through as-is) plus a temp directory to run the CLI with as
+    `cwd`, or None if nothing needed one.
+
+    Text-file attachments are folded straight into the text everywhere
+    (attachments.split_text_attachments). Images are different: the CLI
+    has no flag to take image bytes directly, but its own Read tool can
+    view a local file — restricted to its workspace, which in practice
+    means wherever it's run *from*. Writing each image into a dedicated
+    temp dir and launching the process with cwd set to it (see
+    AIWorker._run_claude_cli) is the only way found to make that work
+    without either an interactive approval prompt (which print mode can
+    never answer) or --dangerously-skip-permissions (too broad — it would
+    also silently enable Bash/Edit/Write regardless of the "Run commands"
+    toggle). Confirmed empirically: `--add-dir <dir>` alone still hits the
+    approval prompt for a path outside the initial workspace; `cwd=<dir>`
+    does not.
+    """
+    if not any(m.get("attachments") for m in messages):
+        return messages, None
+
+    # Lazy: a conversation can have only text-file attachments (no images
+    # at all), which need no filesystem involvement — see the docstring.
+    image_dir: Path | None = None
+    resolved = []
+    counter = 0
+    for m in messages:
+        text, images = attachments.split_text_attachments(m["content"], m.get("attachments") or [])
+        for att in images:
+            if image_dir is None:
+                image_dir = Path(tempfile.mkdtemp(prefix="kortalk-attach-"))
+            # Numbered across the *whole* conversation, not per-message —
+            # two different messages attaching same-named images must not
+            # collide in this one shared directory.
+            filename = f"{counter}_{att['name']}"
+            counter += 1
+            (image_dir / filename).write_bytes(base64.b64decode(att["data"]))
+            # An explicit instruction to go look, not just a passive
+            # caption-shaped note — a bracketed "[attached image: x]" reads
+            # too much like a label already describing something already
+            # said, which risks the model answering from the filename alone
+            # instead of actually invoking Read on it.
+            text += (f'\n\n(There is an image attached at "{filename}" in the '
+                     f"current directory. Read that file before answering.)")
+        resolved.append({"role": m["role"], "content": text})
+    return resolved, image_dir
+
+
+def _anthropic_messages(messages: list[dict]) -> list[dict]:
+    """Anthropic's own multimodal format: `content` is a block list mixing
+    `type: image` (base64) and `type: text` — only built for messages that
+    actually have attachments, everything else keeps its plain string
+    `content` exactly as before."""
+    result = []
+    for m in messages:
+        raw_attachments = m.get("attachments")
+        if not raw_attachments:
+            result.append({"role": m["role"], "content": m["content"]})
+            continue
+        text, images = attachments.split_text_attachments(m["content"], raw_attachments)
+        blocks = [
+            {"type": "image", "source": {"type": "base64", "media_type": att["mime"],
+                                         "data": att["data"]}}
+            for att in images
+        ]
+        if text:
+            blocks.append({"type": "text", "text": text})
+        result.append({"role": m["role"], "content": blocks})
+    return result
+
+
+def _openai_messages(messages: list[dict]) -> list[dict]:
+    """Same idea as _anthropic_messages, in OpenAI chat-completions shape:
+    `type: image_url` with a data: URI instead of a separate base64 field."""
+    result = []
+    for m in messages:
+        raw_attachments = m.get("attachments")
+        if not raw_attachments:
+            result.append({"role": m["role"], "content": m["content"]})
+            continue
+        text, images = attachments.split_text_attachments(m["content"], raw_attachments)
+        blocks = [
+            {"type": "image_url", "image_url": {"url": f"data:{att['mime']};base64,{att['data']}"}}
+            for att in images
+        ]
+        if text:
+            blocks.append({"type": "text", "text": text})
+        result.append({"role": m["role"], "content": blocks})
+    return result
 
 
 def shutdown_workers(wait_ms: int = 500) -> None:
@@ -187,39 +283,63 @@ class AIWorker(QThread):
             ))
             return
 
-        cmd = [claude_bin, "-p", _flatten_messages(self.messages)]
+        # attachments (if any) are materialized into image_dir, which the
+        # process is then run with as cwd — see
+        # _resolve_claude_cli_attachments for why.
+        resolved_messages, image_dir = _resolve_claude_cli_attachments(self.messages)
+
+        # The prompt is untrusted (arbitrary selected/pasted text) and
+        # claude's own CLI parser (Commander.js) treats *any* positional
+        # argument starting with "-" as an attempted option rather than a
+        # value — e.g. a copied YAML document starting with "---" fails
+        # with "error: unknown option '---...'" instead of being read as
+        # the prompt. "--" tells it (and any POSIX-conventional parser)
+        # that everything after is positional, verbatim, no matter what it
+        # looks like — so the prompt must come last, after every real flag.
+        cmd = [claude_bin]
         if self.provider.model:
             cmd += ["--model", self.provider.model]
         cmd += _tool_permission_args(self.web_search, self.local_commands)
         cmd += self.provider.extra_args
+        cmd += ["-p", "--", _flatten_messages(resolved_messages)]
 
-        self._process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            # A new process group (for stop()'s killpg, below) — but not a
-            # new *session*: start_new_session=True also detaches from the
-            # controlling terminal, which is one setsid() too many here and
-            # apparently was breaking claude's own tool use (web search and
-            # the like) — it likely relies on terminal/session detection to
-            # decide what it's allowed to run non-interactively.
-            preexec_fn=os.setpgrp,
-        )
         try:
-            stdout, stderr = self._process.communicate(timeout=self.timeout)
-        except subprocess.TimeoutExpired:
+            self._process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                # Image attachments only — everything else keeps inheriting
+                # this process's own cwd. NOTE: if "Run commands" is also on
+                # for a request that has an image attached, Bash/Edit/Write
+                # for that one request run relative to image_dir instead of
+                # kortalk's own cwd (see _resolve_claude_cli_attachments).
+                cwd=str(image_dir) if image_dir else None,
+                # A new process group (for stop()'s killpg, below) — but not a
+                # new *session*: start_new_session=True also detaches from the
+                # controlling terminal, which is one setsid() too many here and
+                # apparently was breaking claude's own tool use (web search and
+                # the like) — it likely relies on terminal/session detection to
+                # decide what it's allowed to run non-interactively.
+                preexec_fn=os.setpgrp,
+            )
             try:
-                os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                pass
-            self.failed.emit(tr("claude did not respond within {timeout} s.")
-                             .format(timeout=self.timeout))
-            return
-        if self._cancelled:
-            return
-        if self._process.returncode != 0:
-            self.failed.emit(tr("claude exited with an error:\n{error}")
-                             .format(error=(stderr or stdout).strip()))
-            return
-        self.finished_ok.emit(stdout.strip())
+                stdout, stderr = self._process.communicate(timeout=self.timeout)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
+                self.failed.emit(tr("claude did not respond within {timeout} s.")
+                                 .format(timeout=self.timeout))
+                return
+            if self._cancelled:
+                return
+            if self._process.returncode != 0:
+                self.failed.emit(tr("claude exited with an error:\n{error}")
+                                 .format(error=(stderr or stdout).strip()))
+                return
+            self.finished_ok.emit(stdout.strip())
+        finally:
+            if image_dir is not None:
+                shutil.rmtree(image_dir, ignore_errors=True)
 
     # -- Anthropic API (official SDK, streaming) ------------------------------
 
@@ -242,7 +362,7 @@ class AIWorker(QThread):
             with client.messages.stream(
                 model=model,
                 max_tokens=self.max_tokens,
-                messages=self.messages,
+                messages=_anthropic_messages(self.messages),
             ) as stream:
                 self._stream = stream
                 for text in stream.text_stream:
@@ -294,7 +414,7 @@ class AIWorker(QThread):
         body = {
             "model": self.provider.model,
             "stream": True,
-            "messages": self.messages,
+            "messages": _openai_messages(self.messages),
         }
         headers = {"Content-Type": "application/json"}
         if self.provider.api_key:

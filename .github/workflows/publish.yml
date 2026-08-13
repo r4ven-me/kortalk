@@ -9,7 +9,32 @@ on:
     tags: ["v*"]
 
 jobs:
+  # A tag can be pushed for a commit that never went through CI (or that
+  # CI failed on) — this job re-runs the same checks as ci.yml so a red
+  # tag can't reach PyPI just because `build` doesn't depend on ci.yml.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Системные библиотеки Qt (offscreen-рендер)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1
+      - name: Установка пакета и зависимостей
+        run: pip install -e '.[test]' ruff
+      - name: Линтер
+        run: ruff check .
+      - name: Тесты
+        run: pytest -v
+        env:
+          QT_QPA_PLATFORM: offscreen
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
