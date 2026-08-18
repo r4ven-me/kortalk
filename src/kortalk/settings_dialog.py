@@ -228,7 +228,7 @@ class SettingsDialog(QDialog):
         self.prompt_list = QListWidget()
         active_name = str(self.config.get("active_prompt"))
         for p in self.config.prompts():
-            prompt = Prompt(p.name, p.text, p.hotkey)
+            prompt = Prompt(p.name, p.text, p.hotkey, p.provider_id)
             item = QListWidgetItem(_prompt_label(prompt))
             item.setData(Qt.ItemDataRole.UserRole, prompt)
             self.prompt_list.addItem(item)
@@ -264,6 +264,15 @@ class SettingsDialog(QDialog):
         hotkey_clear.clicked.connect(self.prompt_hotkey.clear)
         hotkey_row.addWidget(hotkey_clear)
         right.addLayout(hotkey_row)
+
+        provider_row = QHBoxLayout()
+        provider_row.addWidget(QLabel(tr("Model for this prompt's popup:")))
+        self.prompt_provider = QComboBox()
+        self.prompt_provider.addItem(tr("(active provider)"), "")
+        for prov in self.config.providers():
+            self.prompt_provider.addItem(prov.name, prov.id)
+        provider_row.addWidget(self.prompt_provider, 1)
+        right.addLayout(provider_row)
 
         self.prompt_active = QCheckBox(tr("Default prompt (for tray/hotkey popup)"))
         right.addWidget(self.prompt_active)
@@ -301,6 +310,8 @@ class SettingsDialog(QDialog):
         self.prompt_name.setText(p.name)
         self.prompt_text.setPlainText(p.text)
         self.prompt_hotkey.setKeySequence(QKeySequence(p.hotkey))
+        provider_idx = max(0, self.prompt_provider.findData(p.provider_id))
+        self.prompt_provider.setCurrentIndex(provider_idx)
         self.prompt_active.setChecked(p.name == self._active_prompt_name)
         self._loading_prompt = False
 
@@ -311,6 +322,7 @@ class SettingsDialog(QDialog):
         p.name = self.prompt_name.text().strip() or p.name
         p.text = self.prompt_text.toPlainText().strip()
         p.hotkey = self.prompt_hotkey.keySequence().toString(_KEY_FMT)
+        p.provider_id = self.prompt_provider.currentData() or ""
         item.setData(Qt.ItemDataRole.UserRole, p)
         item.setText(_prompt_label(p))
 

@@ -179,6 +179,7 @@ class _InsetSplitter(QSplitter):
 
 _THINKING_TICK_MS = 400   # animated ellipsis while waiting for the first chunk
 _CURSOR_BLINK_MS = 500    # blinking caret while chunks are arriving
+_LIVE_FORMAT_MS = 400     # how often the still-arriving answer is re-rendered as markdown
 _CURSOR_GLYPH = "▍"
 
 
@@ -617,6 +618,7 @@ class _StreamingBrowser(QWidget):
         self._buffer = ""
         self._prefix = ""
         self._committed_markdown = ""
+        self._last_previewed_len = 0  # see _render_live_preview
         self._thinking_base = ""
         self._thinking_shown_len = 0
         self._thinking_frame = 0
@@ -741,6 +743,13 @@ class _StreamingBrowser(QWidget):
         self._blink_timer.setInterval(_CURSOR_BLINK_MS)
         self._blink_timer.timeout.connect(self._tick_blink)
 
+        # Periodically re-renders the still-arriving answer as real
+        # markdown instead of leaving it as plain streamed text until the
+        # turn completes — see _render_live_preview.
+        self._live_format_timer = QTimer(self)
+        self._live_format_timer.setInterval(_LIVE_FORMAT_MS)
+        self._live_format_timer.timeout.connect(self._render_live_preview)
+
     # -- public API -------------------------------------------------------
 
     def set_colors(self, colors: dict[str, str]) -> None:
@@ -802,6 +811,7 @@ class _StreamingBrowser(QWidget):
         self._set_empty_state(False)
         self._prefix = prefix
         self._buffer = ""
+        self._last_previewed_len = 0
         self._cursor_shown = False
         self._rebuild_blocks(prefix)
         self._live.clear()
@@ -827,6 +837,7 @@ class _StreamingBrowser(QWidget):
         self._thinking_frame = 0
         self._tick_thinking()
         self._thinking_timer.start()
+        self._live_format_timer.start()
 
     def append_chunk(self, delta: str) -> None:
         if not delta:
@@ -841,6 +852,52 @@ class _StreamingBrowser(QWidget):
         self._buffer += delta
         self._append_plain(delta)
         self._set_cursor_visible(True)
+
+    def _render_live_preview(self) -> None:
+        """Periodically re-renders the answer streamed in *so far* as real
+        markdown, instead of only ever formatting it once the whole turn
+        completes — the still-arriving tail keeps streaming in as plain
+        text between ticks exactly as before, just periodically reabsorbed
+        into proper formatting. Reuses _rebuild_blocks — the same, already
+        scroll-safe machinery _render_final uses for the true final render
+        — rather than a bespoke incremental-append path; the cost of
+        redoing the whole markdown+pygments parse on every tick is
+        negligible for realistic answer lengths, and every already-solved
+        settling/scroll-jump edge case stays solved for free.
+
+        A fenced code block only ever gets syntax-highlighted once its
+        closing ``` has actually arrived (nothing short of that tells
+        theme.split_markdown_blocks it's finished) — until then it still
+        reads as a plain paragraph with visible backticks, same as today.
+
+        Skips the render entirely if nothing new arrived since the last
+        tick (the provider can pause between chunks, e.g. mid tool-use in
+        the Claude Code CLI) — no point paying for an identical rebuild."""
+        if not self._buffer.strip() or len(self._buffer) == self._last_previewed_len:
+            return
+        self._last_previewed_len = len(self._buffer)
+
+        stick_to_bottom = self._is_stuck_to_bottom()
+        pos = self._scroll.verticalScrollBar().value()
+        was_cursor_shown = self._cursor_shown
+        # Never bake the blinking caret glyph into committed markdown —
+        # same reasoning as append_chunk hiding it before mutating _buffer.
+        self._set_cursor_visible(False)
+
+        self._rebuild_blocks(self._prefix + self._buffer)
+
+        # Everything up to now is real block widgets again; the live
+        # widget goes back to empty, ready for the next batch of chunks.
+        self._live.clear()
+        self._live_row.setVisible(True)
+        self._thinking_shown_len = 0
+        if was_cursor_shown:
+            self._set_cursor_visible(True)
+
+        if stick_to_bottom:
+            QTimer.singleShot(0, self._defer_scroll_to_bottom)
+        else:
+            QTimer.singleShot(0, lambda: self._restore_scroll_position(pos))
 
     def finish(self, full_text: str) -> None:
         self._stop_animations()
@@ -1083,6 +1140,7 @@ class _StreamingBrowser(QWidget):
     def _stop_animations(self) -> None:
         self._thinking_timer.stop()
         self._blink_timer.stop()
+        self._live_format_timer.stop()
         self._cursor_shown = False
 
     def _tick_thinking(self) -> None:
@@ -1201,18 +1259,62 @@ class _StreamingBrowser(QWidget):
         scrollbar.setValue(min(pos, scrollbar.maximum()))
 
 
+_RESIZE_MARGIN = 6  # px from an edge that grabs a resize instead of a move
+
+_RESIZE_CURSORS = {
+    Qt.Edge.LeftEdge: Qt.CursorShape.SizeHorCursor,
+    Qt.Edge.RightEdge: Qt.CursorShape.SizeHorCursor,
+    Qt.Edge.TopEdge: Qt.CursorShape.SizeVerCursor,
+    Qt.Edge.BottomEdge: Qt.CursorShape.SizeVerCursor,
+    Qt.Edge.LeftEdge | Qt.Edge.TopEdge: Qt.CursorShape.SizeFDiagCursor,
+    Qt.Edge.RightEdge | Qt.Edge.BottomEdge: Qt.CursorShape.SizeFDiagCursor,
+    Qt.Edge.RightEdge | Qt.Edge.TopEdge: Qt.CursorShape.SizeBDiagCursor,
+    Qt.Edge.LeftEdge | Qt.Edge.BottomEdge: Qt.CursorShape.SizeBDiagCursor,
+}
+
+
 class _DraggableCard(QFrame):
     """Card that can be dragged by the mouse from anywhere that isn't a
     button or the response text (those consume the press themselves) —
-    lets the user reposition the frameless popup before closing it."""
+    lets the user reposition the frameless popup before closing it. A
+    narrow margin along each edge resizes the (frameless, so borderless)
+    popup window instead, via the window manager's own native resize
+    (Qt.Window.startSystemResize) rather than manual geometry math — the
+    same mechanism a bordered window's own edges use, so it gets the
+    platform's usual resize cursor/behaviour for free."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._drag_from: QPoint | None = None
+        self.setMouseTracking(True)
+
+    def _resize_edges(self, pos: QPoint) -> Qt.Edge:
+        edges = Qt.Edge(0)
+        if pos.x() <= _RESIZE_MARGIN:
+            edges |= Qt.Edge.LeftEdge
+        elif pos.x() >= self.width() - _RESIZE_MARGIN:
+            edges |= Qt.Edge.RightEdge
+        if pos.y() <= _RESIZE_MARGIN:
+            edges |= Qt.Edge.TopEdge
+        elif pos.y() >= self.height() - _RESIZE_MARGIN:
+            edges |= Qt.Edge.BottomEdge
+        return edges
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_from = event.globalPosition().toPoint() - self.window().pos()
+            edges = self._resize_edges(event.position().toPoint())
+            window = self.window()
+            handle = window.windowHandle()
+            if edges and handle is not None and handle.startSystemResize(edges):
+                # The window manager owns the drag from here on (it delivers
+                # no further move/release events to us) — mark the popup as
+                # user-sized so its own auto-height-to-content no longer
+                # fights whatever size the user just chose.
+                if hasattr(window, "_user_resized"):
+                    window._user_resized = True
+                event.accept()
+                return
+            self._drag_from = event.globalPosition().toPoint() - window.pos()
             event.accept()
         else:
             super().mousePressEvent(event)
@@ -1222,6 +1324,8 @@ class _DraggableCard(QFrame):
             self.window().move(event.globalPosition().toPoint() - self._drag_from)
             event.accept()
         else:
+            edges = self._resize_edges(event.position().toPoint())
+            self.setCursor(_RESIZE_CURSORS.get(edges, Qt.CursorShape.ArrowCursor))
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
@@ -1253,9 +1357,15 @@ class PopupWindow(QWidget):
         self.config = config
         self.worker: AIWorker | None = None
         self._prompt = ""  # set by ask(); kept for "Open in window"
-        width = int(config.get("popup_width"))
         self.max_height = int(config.get("popup_max_height"))
-        self.setFixedWidth(width)
+        # Opens at a fixed size derived from settings (see show_near_cursor
+        # -> _adjust_height), but isn't a *fixed-size window*: the card's
+        # edges accept a mouse-driven resize (_DraggableCard), which flips
+        # _user_resized so the window keeps whatever size the user chose
+        # instead of snapping back on the next streamed chunk.
+        self._user_resized = False
+        self.setMinimumSize(220, 90)
+        self.resize(int(config.get("popup_width")), 90)
 
         app = QGuiApplication.instance()
         colors = theme.card_colors(app)
@@ -1290,6 +1400,16 @@ class PopupWindow(QWidget):
                 background-color: {theme.NORD['n10']}; color: {theme.NORD['n6']};
                 border-color: {theme.NORD['n10']};
             }}
+            QPushButton#stopButton {{
+                color: {theme.NORD['n11']}; border-color: {theme.NORD['n11']};
+            }}
+            QPushButton#stopButton:hover, QPushButton#stopButton:pressed {{
+                background-color: {theme.NORD['n11']}; color: {theme.NORD['n6']};
+                border-color: {theme.NORD['n11']};
+            }}
+            QPushButton#stopButton:disabled {{
+                color: {muted}; border-color: transparent; background: transparent;
+            }}
 
             {theme.scrollbar_stylesheet(colors)}
         """)
@@ -1303,6 +1423,7 @@ class PopupWindow(QWidget):
         header.addWidget(QLabel(provider_name))
         header.addStretch()
         self.stop_btn = QPushButton(tr("Stop"))
+        self.stop_btn.setObjectName("stopButton")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self._stop_answer)
         header.addWidget(self.stop_btn)
@@ -1327,7 +1448,20 @@ class PopupWindow(QWidget):
 
         self._fade_anim: QPropertyAnimation | None = None
 
-        self.browser.contentChanged.connect(self._adjust_height)
+        # A single content change (a streamed chunk, or a live-preview
+        # re-render tick) fires contentChanged several times in a row — the
+        # rebuild's own immediate emit, a deferred one a turn later once
+        # freshly laid-out widgets report their true height, and every
+        # child block's own heightChanged as it settles (see _rebuild_blocks
+        # in _StreamingBrowser). Resizing the actual OS window on each of
+        # those was visible as the popup repeatedly snapping to a
+        # too-small intermediate height and back — debouncing collapses a
+        # whole burst into the one resize that matters, at its end.
+        self._height_debounce = QTimer(self)
+        self._height_debounce.setSingleShot(True)
+        self._height_debounce.setInterval(60)
+        self._height_debounce.timeout.connect(self._adjust_height)
+        self.browser.contentChanged.connect(self._height_debounce.start)
 
     # -- public API -----------------------------------------------------------
 
@@ -1371,10 +1505,12 @@ class PopupWindow(QWidget):
         self.stop_btn.setEnabled(False)
 
     def _adjust_height(self) -> None:
+        if self._user_resized or not shiboken6.isValid(self):
+            return
         content_height = self.browser.natural_height()
         chrome = 64  # header + margins
         height = int(min(self.max_height, max(90, content_height + chrome)))
-        self.setFixedHeight(height)
+        self.resize(self.width(), height)
 
     def _copy_answer(self) -> None:
         _copy_to_clipboard(self.browser.text_content())

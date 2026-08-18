@@ -4,6 +4,19 @@
 
 ### Fixes
 
+- **A hotkey bound to a punctuation key (`` ` ``, `-`, `=`, `[`, `;`, `/`, …)
+  silently failed to register on X11** — e.g. rebinding "Open window" to
+  something like `Alt+\`` made it stop working entirely. Unlike a
+  letter/digit, whose X11 keysym value happens to equal its ASCII code,
+  punctuation keys have their own symbolic keysym names (`` ` `` is
+  `grave`, `-` is `minus`, …) that the raw character doesn't resolve to —
+  the grab was requested for a nonexistent keysym and just never fired,
+  with nothing surfaced beyond a log line. All the standard punctuation
+  keys are now mapped to their real X11 keysym names.
+- **The "Open window" hotkey now shows/hides the window like a tray
+  click**, instead of only ever (re)focusing it — pressing it again while
+  the window already had focus visibly did nothing, which read as the
+  shortcut not working.
 - **Selected/pasted text starting with `-` no longer breaks the Claude
   Code CLI provider.** A YAML document, a CLI flag, anything starting with
   a dash — claude's own argument parser (Commander.js) reads a leading `-`
@@ -29,6 +42,13 @@
   later. It now only ever moves the scrollbar on the first turn (so
   following a new answer still feels immediate) and the last one (a
   guaranteed final correction), never on the turns in between.
+- **The popup no longer flickers/resizes back and forth while an answer is
+  streaming in.** Its auto-height-to-content logic reacted to every single
+  content-change signal, including several transient, not-yet-settled ones
+  fired in a row by each live-preview re-render tick — each one resized
+  the actual OS window, which showed as a rapid shrink/grow flicker roughly
+  every 400ms. These are now debounced into a single resize once a burst
+  of changes actually settles.
 
 ### Changes
 
@@ -63,6 +83,33 @@
   with it as its working directory, so its own Read tool can see them
   without an interactive approval prompt print mode could never answer.
   Popup windows don't have a composer, so this is dialog-mode only.
+- **Streamed responses now render as formatted Markdown while they're
+  still arriving**, instead of showing raw `**`/`` ``` ``/`#` syntax until
+  the answer finishes. The in-progress text is periodically re-rendered
+  through the same block-based formatter used for the final answer
+  (about twice a second), reusing the existing scroll-position handling
+  so this doesn't reintroduce any jumping. A fenced code block still
+  displays as plain text until its closing ` ``` ` actually arrives —
+  there's no way to syntax-highlight a block that isn't finished yet.
+- **New: per-prompt provider/model** — Settings → Prompts now has a "Model
+  for this prompt's popup" picker next to each prompt's hotkey. Left on
+  "(active provider)" a prompt behaves as before; pinned to a specific
+  provider, its popup always answers through that one instead — handy for
+  e.g. keeping a fast/cheap model on one hotkey and a stronger one on
+  another. This is popup-only and never touches the provider selected in
+  the two-column window, which keeps whatever you last picked there.
+- **The popup can now be resized by dragging its edges/corners**, using
+  the window manager's own native resize instead of manual geometry
+  math — the usual resize cursors just work. It still always *opens* at
+  the size derived from Settings (width, and height fit to the answer up
+  to "Max popup height"); once you resize a given popup by hand, that one
+  keeps the size you gave it instead of snapping back as more of the
+  answer streams in. The next popup you open starts fresh at the
+  configured size again.
+- **The Stop button is now red while a popup is generating an answer**,
+  and dims back to the ordinary muted button style once it's done —
+  previously it looked identical (and equally unremarkable) in both
+  states.
 
 ## 1.1.0 — 2026-08-05
 

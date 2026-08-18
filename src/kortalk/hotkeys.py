@@ -33,6 +33,25 @@ _KEYSYM_NAMES = {
     "pgup": "Prior", "pgdown": "Next", "print": "Print", "pause": "Pause",
     "up": "Up", "down": "Down", "left": "Left", "right": "Right",
     **{f"f{i}": f"F{i}" for i in range(1, 25)},
+    # Punctuation: letters/digits resolve via XStringToKeysym as-is (their
+    # keysym value equals their ASCII code), but punctuation keysyms have
+    # their own symbolic names — the raw character is NoSymbol to Xlib, so
+    # without this a binding on one of these keys silently fails to grab
+    # (see parse_sequence's fallback, which only works for single letters).
+    "`": "grave", "~": "asciitilde",
+    "-": "minus", "_": "underscore",
+    "=": "equal", "+": "plus",
+    "[": "bracketleft", "{": "braceleft",
+    "]": "bracketright", "}": "braceright",
+    ";": "semicolon", ":": "colon",
+    "'": "apostrophe", '"': "quotedbl",
+    ",": "comma", "<": "less",
+    ".": "period", ">": "greater",
+    "/": "slash", "?": "question",
+    "\\": "backslash", "|": "bar",
+    "!": "exclam", "@": "at", "#": "numbersign", "$": "dollar",
+    "%": "percent", "^": "asciicircum", "&": "ampersand", "*": "asterisk",
+    "(": "parenleft", ")": "parenright",
 }
 
 

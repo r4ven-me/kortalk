@@ -62,7 +62,9 @@ DEFAULT_PROMPTS = [
 class Prompt:
     name: str
     text: str
-    hotkey: str = ""  # global hotkey that opens the popup with this prompt
+    hotkey: str = ""      # global hotkey that opens the popup with this prompt
+    provider_id: str = ""  # "" = use the active provider; else pin this prompt's
+                            # popup to a specific provider regardless of it
 
 
 @dataclass
@@ -208,12 +210,14 @@ class Config:
 
     def prompts(self) -> list[Prompt]:
         return [Prompt(name=str(p.get("name", "")), text=str(p.get("text", "")),
-                       hotkey=str(p.get("hotkey", "") or ""))
+                       hotkey=str(p.get("hotkey", "") or ""),
+                       provider_id=str(p.get("provider_id", "") or ""))
                 for p in self._data.get("prompts", [])]
 
     def set_prompts(self, prompts: list[Prompt]) -> None:
         self._data["prompts"] = [
-            {"name": p.name, "text": p.text, "hotkey": p.hotkey} for p in prompts
+            {"name": p.name, "text": p.text, "hotkey": p.hotkey, "provider_id": p.provider_id}
+            for p in prompts
         ]
         self.save()
 

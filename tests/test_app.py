@@ -141,6 +141,92 @@ def test_local_ipc_socket_is_restricted_to_the_current_user(qapp, config, monkey
         kortalk.quit()
 
 
+def _make_kortalk(qapp, config, monkeypatch, name):
+    import kortalk.app as app_mod
+
+    monkeypatch.setattr(app_mod, "SOCKET_NAME", name)
+    QLocalServer.removeServer(name)
+    return KortalkApp(qapp, config)
+
+
+def test_resolve_uses_the_prompts_own_provider_when_set(qapp, config, monkeypatch):
+    # a hotkey-bound prompt can pin its popup to a specific provider,
+    # overriding whatever provider is currently active
+    prompts = config.prompts()
+    prompts[1].provider_id = "ollama"  # "Translate"
+    config.set_prompts(prompts)
+
+    kortalk = _make_kortalk(qapp, config, monkeypatch, "kortalk-test-resolve-1")
+    try:
+        provider, prompt, _selection = kortalk._resolve(
+            {"action": "popup", "prompt_name": "Translate"})
+        assert provider.id == "ollama"
+        assert prompt.startswith("Translate")
+    finally:
+        kortalk.quit()
+
+
+def test_resolve_falls_back_to_the_active_provider_when_prompt_has_none(qapp, config, monkeypatch):
+    kortalk = _make_kortalk(qapp, config, monkeypatch, "kortalk-test-resolve-2")
+    try:
+        provider, _prompt, _selection = kortalk._resolve(
+            {"action": "popup", "prompt_name": "Fix"})
+        assert provider.id == config.active_provider().id
+    finally:
+        kortalk.quit()
+
+
+def test_resolve_explicit_provider_override_wins_over_the_prompts_own(qapp, config, monkeypatch):
+    prompts = config.prompts()
+    prompts[1].provider_id = "ollama"
+    config.set_prompts(prompts)
+
+    kortalk = _make_kortalk(qapp, config, monkeypatch, "kortalk-test-resolve-3")
+    try:
+        provider, _prompt, _selection = kortalk._resolve(
+            {"action": "popup", "prompt_name": "Translate", "provider": "anthropic"})
+        assert provider.id == "anthropic"
+    finally:
+        kortalk.quit()
+
+
+def test_resolve_does_not_change_the_dialog_windows_active_provider(qapp, config, monkeypatch):
+    # regression: a popup pinned to a specific provider must not leak into
+    # config's "active_provider" — that's what the dialog window's provider
+    # dropdown reads, and it must stay exactly as the user last set it there
+    prompts = config.prompts()
+    prompts[1].provider_id = "ollama"
+    config.set_prompts(prompts)
+    before = config.get("active_provider")
+
+    kortalk = _make_kortalk(qapp, config, monkeypatch, "kortalk-test-resolve-4")
+    try:
+        kortalk._resolve({"action": "popup", "prompt_name": "Translate"})
+        assert config.get("active_provider") == before
+    finally:
+        kortalk.quit()
+
+
+def test_resolve_raw_prompt_text_ignores_the_active_prompts_provider(qapp, config, monkeypatch):
+    # a one-off `kortalk "some text"` prompt isn't tied to any named prompt,
+    # so it must not silently inherit the active prompt's provider pin
+    prompts = config.prompts()
+    active_name = config.active_prompt().name
+    for p in prompts:
+        if p.name == active_name:
+            p.provider_id = "ollama"
+    config.set_prompts(prompts)
+
+    kortalk = _make_kortalk(qapp, config, monkeypatch, "kortalk-test-resolve-5")
+    try:
+        provider, prompt, _selection = kortalk._resolve(
+            {"action": "popup", "prompt": "custom text"})
+        assert provider.id == config.active_provider().id
+        assert prompt == "custom text"
+    finally:
+        kortalk.quit()
+
+
 class _FakeWindow:
     def __init__(self, visible: bool):
         self._visible = visible
@@ -156,6 +242,10 @@ class _FakeWindow:
 def _fake_app(main_window):
     calls = []
     fake = SimpleNamespace(main_window=main_window, handle=lambda cmd: calls.append(cmd))
+    # lets _hotkey_activated's "window" branch (which delegates to
+    # _tray_activated for the same show/hide toggle a tray click gets)
+    # run against this fake too, not just _tray_activated's own tests
+    fake._tray_activated = lambda reason: KortalkApp._tray_activated(fake, reason)
     return fake, calls
 
 
@@ -185,3 +275,19 @@ def test_tray_context_menu_click_is_ignored():
     KortalkApp._tray_activated(fake, QSystemTrayIcon.ActivationReason.Context)
     assert calls == []
     assert fake.main_window.hidden is False
+
+
+def test_window_hotkey_opens_the_window_when_none_exists():
+    fake, calls = _fake_app(main_window=None)
+    KortalkApp._hotkey_activated(fake, "window")
+    assert calls == [{"action": "window"}]
+
+
+def test_window_hotkey_toggles_a_visible_window_shut():
+    # regression: the "window" hotkey used to only ever (re)show/focus the
+    # window, so pressing it again while already focused did nothing
+    # visible — it must toggle exactly like a tray click does
+    fake, calls = _fake_app(main_window=_FakeWindow(visible=True))
+    KortalkApp._hotkey_activated(fake, "window")
+    assert fake.main_window.hidden is True
+    assert calls == []  # not re-opened, just hidden

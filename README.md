@@ -10,9 +10,11 @@ cursor. Lives in the tray, streams responses, supports multiple providers.
 
 - **Popup near the cursor** — rounded corners, Markdown rendering with
   highlighted code blocks, real-time token streaming, text
-  selection/copying, draggable by the mouse. Stays on top of every other
-  window and only closes via its own ✕ button — losing focus or clicking
-  outside it does nothing.
+  selection/copying, draggable by the mouse and resizable from its edges.
+  Always opens at the size configured in Settings; a manual resize sticks
+  for that popup instead of snapping back as the answer keeps streaming
+  in. Stays on top of every other window and only closes via its own ✕
+  button — losing focus or clicking outside it does nothing.
 - **Two-column window** — editable prompt+text on the left, response on the
   right, provider selector in the toolbar, `Ctrl+Enter` to send. Paste
   (`Ctrl+V`), drag and drop, or use the 📎 button to attach images and text
@@ -31,7 +33,10 @@ cursor. Lives in the tray, streams responses, supports multiple providers.
   configuration required.
 - **Prompt library** — any number of named prompts in Settings, each with
   its own hotkey and reachable from the tray submenu; one is marked as the
-  default (used by the prompt's own popup hotkey).
+  default (used by the prompt's own popup hotkey). A prompt can also pin
+  its popup to a specific provider/model, overriding whatever provider is
+  active — this never changes the provider selected in the two-column
+  window.
 - **AI providers**:
   - **Claude Code CLI** — via `claude -p`, no API key (default);
   - **Anthropic API** — official SDK, streaming (API key required);

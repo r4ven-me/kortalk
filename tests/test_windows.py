@@ -74,6 +74,106 @@ def test_open_in_window_carries_the_original_prompt(qtbot, config):
     assert received == [("Explain:\n\nsome selected text", "**answer**")]
 
 
+def test_popup_opens_at_the_width_configured_in_settings(qtbot, config):
+    config.set("popup_width", 640)
+    popup = PopupWindow(config, "Test Provider")
+    qtbot.addWidget(popup)
+    assert popup.width() == 640
+
+
+def test_popup_height_adjustment_is_debounced(qtbot, config, monkeypatch):
+    # A single content change fires contentChanged several times in a row
+    # (see the comment above _height_debounce in PopupWindow.__init__) —
+    # each must not resize the actual OS window on its own, or the popup
+    # visibly snaps back and forth; only one _adjust_height call should
+    # eventually go through for a whole burst.
+    mock_adjust = MagicMock()
+    monkeypatch.setattr(PopupWindow, "_adjust_height", mock_adjust)
+    popup = PopupWindow(config, "Test Provider")
+    qtbot.addWidget(popup)
+
+    for _ in range(5):
+        popup.browser.contentChanged.emit()
+    assert mock_adjust.call_count == 0  # still inside the debounce window
+
+    qtbot.waitUntil(lambda: mock_adjust.call_count == 1, timeout=2000)
+    qtbot.wait(100)
+    assert mock_adjust.call_count == 1  # the burst collapsed into a single call
+
+
+def test_adjust_height_is_a_noop_after_a_manual_resize(qtbot, config):
+    popup = PopupWindow(config, "Test Provider")
+    qtbot.addWidget(popup)
+    popup.browser.finish("some text\n\n" + "more text " * 40)  # non-trivial natural height
+
+    popup._user_resized = True
+    popup.resize(500, 321)
+    popup._adjust_height()
+
+    assert popup.height() == 321  # the user's own size sticks, not overwritten
+
+
+def test_card_edge_press_starts_a_system_resize_and_pins_the_size(qtbot, config, monkeypatch):
+    popup = PopupWindow(config, "Test Provider")
+    qtbot.addWidget(popup)
+    popup.resize(400, 200)
+    card = popup.card
+    card.resize(400, 200)
+
+    fake_handle = MagicMock()
+    fake_handle.startSystemResize.return_value = True
+    monkeypatch.setattr(PopupWindow, "windowHandle", lambda self: fake_handle)
+
+    press = _mouse_event(QEvent.Type.MouseButtonPress, QPoint(2, 100), QPoint(2, 100),
+                         Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton)
+    card.mousePressEvent(press)
+
+    fake_handle.startSystemResize.assert_called_once_with(windows_mod.Qt.Edge.LeftEdge)
+    assert popup._user_resized is True
+    assert card._drag_from is None  # the WM owns the drag now, not our own move-logic
+
+
+def test_card_press_away_from_any_edge_still_just_drags(qtbot, config):
+    # regression: the new edge-resize hit-testing must not swallow ordinary
+    # drag-to-move clicks in the middle of the card
+    popup = PopupWindow(config, "Test Provider")
+    qtbot.addWidget(popup)
+    popup.move(100, 100)
+    popup.resize(400, 200)
+    card = popup.card
+    card.resize(400, 200)
+
+    press = _mouse_event(QEvent.Type.MouseButtonPress, QPoint(200, 100), QPoint(300, 200),
+                         Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton)
+    card.mousePressEvent(press)
+
+    assert card._drag_from == QPoint(200, 100)
+    assert popup._user_resized is False
+
+
+def test_stop_button_has_a_red_style_while_enabled_and_dims_when_disabled(qtbot, config):
+    popup = PopupWindow(config, "Test Provider")
+    qtbot.addWidget(popup)
+    assert popup.stop_btn.objectName() == "stopButton"
+    stylesheet = popup.card.styleSheet()
+    assert "#stopButton" in stylesheet
+    assert theme.NORD["n11"] in stylesheet  # red accent for the active (enabled) state
+    assert "#stopButton:disabled" in stylesheet  # dims back to muted once finished
+
+
+def test_stop_button_enabled_state_tracks_generation(qtbot, config, monkeypatch):
+    _patch_worker(monkeypatch)
+    popup = PopupWindow(config, "Test Provider")
+    qtbot.addWidget(popup)
+    assert not popup.stop_btn.isEnabled()
+
+    popup.ask(config.active_provider(), "hello")
+    assert popup.stop_btn.isEnabled()
+
+    popup._on_finished("answer")
+    assert not popup.stop_btn.isEnabled()
+
+
 def _wheel_event(dx: int, dy: int) -> QWheelEvent:
     return QWheelEvent(
         QPointF(10, 10), QPointF(10, 10), QPoint(0, 0), QPoint(dx, dy),
@@ -190,6 +290,126 @@ def test_defer_scroll_to_bottom_only_commits_first_and_last_pass(qtbot):
     qtbot.waitUntil(lambda: len(calls) == 2, timeout=2000)
 
     assert len(calls) == 2
+
+
+# -- _StreamingBrowser: live markdown preview while streaming ---------------------
+
+def _started_browser(qtbot):
+    browser = _StreamingBrowser()
+    qtbot.addWidget(browser)
+    browser.set_colors(theme.card_colors(QGuiApplication.instance()))
+    browser.begin_stream("Thinking")
+    return browser
+
+
+def test_live_preview_renders_formatted_blocks_before_finish(qtbot):
+    # The whole point: formatting (bold, code highlighting, ...) should
+    # show up *while* the answer is still streaming in, not only once
+    # finish() runs.
+    browser = _started_browser(qtbot)
+
+    browser.append_chunk("**bold text** and more")
+    assert browser._block_widgets == []  # nothing rendered yet -- no tick has run
+
+    browser._render_live_preview()
+
+    assert len(browser._block_widgets) == 1
+    # absorbed into the committed block — only the still-blinking cursor
+    # glyph (streaming is still ongoing) is left in the live widget
+    assert browser._live.toPlainText() == windows_mod._CURSOR_GLYPH
+
+
+def test_live_preview_skips_an_unchanged_buffer(qtbot):
+    browser = _started_browser(qtbot)
+    browser.append_chunk("hello")
+    browser._render_live_preview()
+    first_block = browser._block_widgets[0]
+
+    browser._render_live_preview()  # no new chunk arrived since the last tick
+
+    assert browser._block_widgets[0] is first_block  # untouched, not torn down again
+
+
+def test_live_preview_does_nothing_during_the_thinking_placeholder(qtbot):
+    browser = _started_browser(qtbot)  # no append_chunk yet
+
+    browser._render_live_preview()
+
+    assert browser._block_widgets == []
+
+
+def test_live_preview_does_not_bake_the_cursor_glyph_into_rendered_text(qtbot):
+    browser = _started_browser(qtbot)
+    browser.append_chunk("hello")  # leaves the blinking cursor glyph shown
+
+    browser._render_live_preview()
+
+    assert windows_mod._CURSOR_GLYPH not in browser._committed_markdown
+
+
+def test_streaming_continues_normally_after_a_live_preview_tick(qtbot):
+    browser = _started_browser(qtbot)
+    browser.append_chunk("first part")
+    browser._render_live_preview()
+
+    browser.append_chunk(" second part")
+
+    assert browser.text_content() == "first part second part"
+    assert " second part" in browser._live.toPlainText()
+
+
+def _started_visible_browser(qtbot):
+    # A real, shown widget — unlike _started_browser(), which several other
+    # tests here deliberately leave unshown since they only check block
+    # *counts*. Actual scrolling needs a real layout pass: an offscreen
+    # widget that's never shown reports scrollbar.maximum() == 0 forever,
+    # regardless of how much content it holds.
+    browser = _StreamingBrowser()
+    qtbot.addWidget(browser)
+    browser.set_colors(theme.card_colors(QGuiApplication.instance()))
+    browser.resize(700, 300)
+    browser.show()
+    qtbot.waitExposed(browser)
+    browser.begin_stream("Thinking")
+    return browser
+
+
+def test_live_preview_keeps_following_the_bottom_when_stuck(qtbot):
+    browser = _started_visible_browser(qtbot)
+    scrollbar = browser._scroll.verticalScrollBar()
+
+    browser.append_chunk("first line\n\n" + "some text " * 80)
+    browser._render_live_preview()
+
+    qtbot.waitUntil(lambda: scrollbar.maximum() > 0, timeout=1000)
+    qtbot.waitUntil(lambda: scrollbar.value() == scrollbar.maximum(), timeout=1000)
+
+
+def test_live_preview_preserves_position_when_scrolled_away_from_bottom(qtbot):
+    browser = _started_visible_browser(qtbot)
+    scrollbar = browser._scroll.verticalScrollBar()
+    browser.append_chunk("first line\n\n" + "some text " * 80)
+    browser._render_live_preview()
+    qtbot.waitUntil(lambda: scrollbar.maximum() > 0, timeout=1000)
+    scrollbar.setValue(0)  # scrolled away from the bottom, to the top
+
+    browser.append_chunk("\n\nmore text " * 80)
+    browser._render_live_preview()
+    qtbot.wait(150)  # let any deferred correction run its course
+
+    assert scrollbar.value() == 0  # stayed put, not yanked back to the bottom
+
+
+def test_finish_after_live_previews_still_renders_the_full_final_text(qtbot):
+    browser = _started_browser(qtbot)
+    browser.append_chunk("part one\n\npart two")
+    browser._render_live_preview()
+    browser.append_chunk(" and the rest")
+
+    browser.finish("part one\n\npart two and the rest")
+
+    assert browser._committed_markdown == "part one\n\npart two and the rest"
+    assert browser._live.toPlainText() == ""
 
 
 # -- MainWindow: "Quick questions" session --------------------------------------

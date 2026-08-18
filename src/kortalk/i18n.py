@@ -133,6 +133,8 @@ RU: dict[str, str] = {
     "Prompt text (the selection is appended after it):":
         "Текст промпта (выделение добавляется после него):",
     "Hotkey (popup with this prompt):": "Клавиша (popup с этим промптом):",
+    "Model for this prompt's popup:": "Модель для popup этого промпта:",
+    "(active provider)": "(активный провайдер)",
     "Clear": "Очистить",
     "Default prompt (for tray/hotkey popup)":
         "Промпт по умолчанию (для popup из трея/хоткея)",

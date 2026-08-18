@@ -106,6 +106,23 @@ def test_prompt_hotkey_persists_to_the_edited_prompt_only(qtbot, config):
     assert hotkeys["Fix"] == ""
 
 
+def test_prompt_provider_persists_to_the_edited_prompt_only(qtbot, config):
+    dlg = SettingsDialog(config)
+    qtbot.addWidget(dlg)
+
+    dlg.prompt_list.setCurrentRow(1)  # "Translate"
+    dlg.prompt_provider.setCurrentIndex(dlg.prompt_provider.findData("ollama"))
+    dlg.prompt_list.setCurrentRow(0)  # "Explain"
+    # switching rows shows Explain's own (default) provider choice, untouched
+    assert dlg.prompt_provider.currentData() == ""
+    dlg._save()
+
+    providers = {p.name: p.provider_id for p in config.prompts()}
+    assert providers["Translate"] == "ollama"
+    assert providers["Explain"] == ""
+    assert providers["Fix"] == ""
+
+
 def test_prompt_list_label_shows_the_hotkey(qtbot, config):
     dlg = SettingsDialog(config)
     qtbot.addWidget(dlg)

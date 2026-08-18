@@ -33,6 +33,27 @@ def test_prompt_hotkey_roundtrip(config):
     assert reloaded[2].hotkey == ""
 
 
+def test_prompt_provider_id_roundtrip(config):
+    prompts = config.prompts()
+    assert prompts[1].provider_id == ""  # no per-prompt provider by default
+    prompts[1].provider_id = "ollama"
+    config.set_prompts(prompts)
+
+    reloaded = Config().prompts()
+    assert reloaded[1].provider_id == "ollama"
+    assert reloaded[2].provider_id == ""
+
+
+def test_prompts_without_provider_id_field_are_readable(config_dir):
+    # configs written before this field existed have no "provider_id" key
+    (config_dir / "config.yaml").write_text(
+        yaml.safe_dump({"prompts": [{"name": "Old", "text": "Old text", "hotkey": ""}]}),
+        encoding="utf-8",
+    )
+    prompts = Config().prompts()
+    assert prompts[0] == Prompt(name="Old", text="Old text", hotkey="", provider_id="")
+
+
 def test_prompts_without_hotkey_field_are_readable(config_dir):
     # configs written by older versions have no "hotkey" key
     (config_dir / "config.yaml").write_text(

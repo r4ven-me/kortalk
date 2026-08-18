@@ -354,6 +354,12 @@ class KortalkApp:
         if action.startswith(_PROMPT_ACTION):
             self.handle({"action": "popup",
                          "prompt_name": action[len(_PROMPT_ACTION):]})
+        elif action == "window":
+            # Same show/hide toggle as a tray click, not just "always
+            # (re)focus" — otherwise pressing the hotkey again while the
+            # window already has focus does nothing visible, which reads
+            # as the shortcut being broken.
+            self._tray_activated(QSystemTrayIcon.ActivationReason.Trigger)
         else:
             self.handle({"action": action})
 
@@ -388,17 +394,30 @@ class KortalkApp:
         return text.strip()
 
     def _resolve(self, command: dict):
+        # A prompt bound to a hotkey (or the active prompt, for the
+        # prompt-independent default popup) may pin its own provider —
+        # resolved here, but never written back to config: doing so would
+        # change the provider shown/selected in the dialog window, which
+        # the user explicitly does not want as a side effect of a popup.
+        named_prompt = None
+        if command.get("prompt_name"):
+            named_prompt = self.config.prompt_by_name(command["prompt_name"])
+        prompt_obj = named_prompt
+        if prompt_obj is None and not command.get("prompt"):
+            prompt_obj = self.config.active_prompt()
+
         provider = None
         if command.get("provider"):
             provider = self.config.provider(command["provider"])
+        elif prompt_obj and prompt_obj.provider_id:
+            provider = self.config.provider(prompt_obj.provider_id)
         if provider is None:
             provider = self.config.active_provider()
 
         if command.get("prompt"):
             prompt = command["prompt"]
-        elif command.get("prompt_name"):
-            named = self.config.prompt_by_name(command["prompt_name"])
-            prompt = named.text if named else self.config.active_prompt().text
+        elif prompt_obj:
+            prompt = prompt_obj.text
         else:
             prompt = self.config.active_prompt().text
 

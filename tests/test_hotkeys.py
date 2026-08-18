@@ -9,6 +9,7 @@ logic is instead verified with both backends faked out.
 
 from __future__ import annotations
 
+import ctypes
 from unittest.mock import MagicMock
 
 import pytest
@@ -50,6 +51,39 @@ def test_parse_sequence_unknown_modifier_returns_none():
 @pytest.mark.parametrize("sequence", ["", "   "])
 def test_parse_sequence_blank_returns_none(sequence):
     assert parse_sequence(sequence) is None
+
+
+@pytest.mark.parametrize("key,keysym", [
+    ("`", "grave"), ("-", "minus"), ("=", "equal"),
+    ("[", "bracketleft"), ("]", "bracketright"),
+    (";", "semicolon"), ("'", "apostrophe"),
+    (",", "comma"), (".", "period"), ("/", "slash"), ("\\", "backslash"),
+])
+def test_parse_sequence_maps_punctuation_to_its_x11_keysym_name(key, keysym):
+    # Regression: a punctuation key's raw character is NoSymbol to
+    # XStringToKeysym (unlike a letter/digit, whose keysym value IS its
+    # ASCII code) — a hotkey ending in one of these (e.g. the default
+    # window hotkey rebound to "Alt+`") silently failed to grab, with no
+    # visible error beyond a log line, because the fallback in
+    # parse_sequence only produces a resolvable name for single letters.
+    mods, resolved = parse_sequence(f"Alt+{key}")
+    assert resolved == keysym
+    assert mods == X11_MODMASK["alt"]
+
+
+def test_all_named_keysyms_are_real_x11_keysym_names():
+    # Guards the whole _KEYSYM_NAMES table against a typo'd/wrong keysym
+    # name — exactly the failure mode fixed above, generalized to every
+    # entry instead of just the punctuation added for it.
+    try:
+        xlib = ctypes.CDLL("libX11.so.6")
+    except OSError:
+        pytest.skip("libX11 not available")
+    xlib.XStringToKeysym.argtypes = [ctypes.c_char_p]
+    xlib.XStringToKeysym.restype = ctypes.c_ulong
+    for qt_name, keysym_name in hotkeys_mod._KEYSYM_NAMES.items():
+        assert xlib.XStringToKeysym(keysym_name.encode()) != 0, \
+            f"{qt_name!r} -> {keysym_name!r} is not a real X11 keysym"
 
 
 # -- to_portal_trigger ------------------------------------------------------------
