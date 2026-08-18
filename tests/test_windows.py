@@ -87,18 +87,26 @@ def test_popup_height_adjustment_is_debounced(qtbot, config, monkeypatch):
     # each must not resize the actual OS window on its own, or the popup
     # visibly snaps back and forth; only one _adjust_height call should
     # eventually go through for a whole burst.
-    mock_adjust = MagicMock()
-    monkeypatch.setattr(PopupWindow, "_adjust_height", mock_adjust)
+    #
+    # The debounce timer's real Qt `timeout` signal is connected straight
+    # to `self._adjust_height` (see __init__) — the replacement here must
+    # stay a plain function (bound to the instance via the normal
+    # descriptor protocol when read as self._adjust_height), not a
+    # MagicMock: connecting a live Qt signal directly to a bare Mock
+    # instead of an actual bound method crashed pytest with a segfault in
+    # CI (PySide6 on Python 3.9), even though it worked locally.
+    calls = []
+    monkeypatch.setattr(PopupWindow, "_adjust_height", lambda self: calls.append(1))
     popup = PopupWindow(config, "Test Provider")
     qtbot.addWidget(popup)
 
     for _ in range(5):
         popup.browser.contentChanged.emit()
-    assert mock_adjust.call_count == 0  # still inside the debounce window
+    assert calls == []  # still inside the debounce window
 
-    qtbot.waitUntil(lambda: mock_adjust.call_count == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(calls) == 1, timeout=2000)
     qtbot.wait(100)
-    assert mock_adjust.call_count == 1  # the burst collapsed into a single call
+    assert calls == [1]  # the burst collapsed into a single call
 
 
 def test_adjust_height_is_a_noop_after_a_manual_resize(qtbot, config):
